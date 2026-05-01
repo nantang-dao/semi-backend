@@ -1,0 +1,23 @@
+app/controllers/oauth_controller.rb
+  d09588fa00adafee 50-51,108-110,112,114,205-209,228-237,249-251,260-263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "6210a407c8dd109194b6bb072ec49bc828b57b43",
+  "prompts": {
+    "d09588fa00adafee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "46c3e587-d2bf-4425-b1a3-a4fd9a0bba84",
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "human_author": "jiangplus",
+      "messages": [],
+      "total_additions": 29,
+      "total_deletions": 7,
+      "accepted_lines": 29,
+      "overriden_lines": 0
+    }
+  }
+}
