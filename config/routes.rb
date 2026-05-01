@@ -32,5 +32,28 @@ Rails.application.routes.draw do
   post "set_contacts" => "home#set_contacts"
   get  "get_contacts" => "home#get_contacts"
 
+  # OIDC Discovery
+  get ".well-known/openid-configuration" => "oauth#openid_configuration"
+
+  # OAuth 2.0 core endpoints
+  scope "/oauth" do
+    get    "authorize"        => "oauth#authorize_info"
+    post   "authorize"        => "oauth#authorize_decision"
+    post   "token"            => "oauth#token"
+    get    "userinfo"         => "oauth#userinfo"
+    post   "revoke"           => "oauth#revoke"
+    get    "jwks"             => "oauth#jwks"
+
+    # Developer portal
+    get    "applications"     => "oauth#list_applications"
+    post   "applications"     => "oauth#create_application"
+    patch  "applications/:id" => "oauth#update_application"
+    delete "applications/:id" => "oauth#destroy_application"
+
+    # User grants management
+    get    "grants"           => "oauth#list_grants"
+    delete "grants/:id"       => "oauth#destroy_grant"
+  end
+
   # Defines the root path route ("/")
 end
