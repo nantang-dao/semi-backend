@@ -47,6 +47,8 @@ class OauthController < ApplicationController
     state = params[:state]
 
     if params[:action_choice] == "deny"
+      app = find_application!(params[:client_id])
+      validate_redirect_uri!(app, redirect_uri)
       uri = append_query(redirect_uri, error: "access_denied", state: state)
       return render json: { redirect_to: uri }
     end
@@ -103,10 +105,13 @@ class OauthController < ApplicationController
 
   # POST /oauth/revoke
   def revoke
+    app = find_application!(params[:client_id])
+    authenticate_client!(app, params[:client_secret])
+
     token_value = params[:token]
-    if (at = OauthAccessToken.find_by(token: token_value))
+    if (at = OauthAccessToken.find_by(token: token_value, application_id: app.id))
       at.revoke!
-    elsif (rt = OauthRefreshToken.find_by(token: token_value))
+    elsif (rt = OauthRefreshToken.find_by(token: token_value, application_id: app.id))
       rt.revoke!
       rt.oauth_access_token.update!(revoked_at: Time.current)
     end
@@ -197,6 +202,11 @@ class OauthController < ApplicationController
 
   private
 
+  def authenticate_client!(app, secret)
+    raise AppError.new("client_secret required") if secret.blank?
+    raise AppError.new("Invalid client credentials") unless BCrypt::Password.new(app.client_secret_digest).is_password?(secret)
+  end
+
   def find_application!(client_id)
     OauthApplication.find_by(client_id: client_id) ||
       raise(AppError.new("Unknown client_id"))
@@ -214,15 +224,20 @@ class OauthController < ApplicationController
   end
 
   def handle_authorization_code_grant
-    code_record = OauthAuthorizationCode.valid.find_by(code: params[:code])
-    raise AppError.new("Invalid or expired authorization code") unless code_record
-
     app = find_application!(params[:client_id])
-    raise AppError.new("client_id mismatch") unless code_record.application_id == app.id
+    authenticate_client!(app, params[:client_secret])
+    raise AppError.new("Application is not active") unless app.status == "active"
+
+    # Atomically claim the code — prevents replay and TOCTOU races
+    claimed = OauthAuthorizationCode.valid
+      .where(code: params[:code], application_id: app.id)
+      .update_all(used: true)
+    raise AppError.new("Invalid or expired authorization code") if claimed == 0
+
+    code_record = OauthAuthorizationCode.find_by!(code: params[:code])
     raise AppError.new("redirect_uri mismatch") unless code_record.redirect_uri == params[:redirect_uri]
 
     code_record.verify_pkce!(params[:code_verifier].to_s)
-    code_record.update!(used: true)
 
     access_token = OauthAccessToken.issue(user: code_record.user, application: app, scopes: code_record.scopes)
     refresh_token = OauthRefreshToken.issue(user: code_record.user, application: app, access_token: access_token)
@@ -231,6 +246,9 @@ class OauthController < ApplicationController
   end
 
   def handle_refresh_token_grant
+    app = find_application!(params[:client_id])
+    authenticate_client!(app, params[:client_secret])
+
     rt = OauthRefreshToken.find_by(token: params[:refresh_token])
     unless rt&.active?
       if rt&.revoked_at.present?
@@ -239,6 +257,10 @@ class OauthController < ApplicationController
       end
       raise AppError.new("Invalid or expired refresh_token")
     end
+
+    raise AppError.new("client_id mismatch") unless rt.oauth_application_id == app.id
+    raise AppError.new("Application is not active") unless app.status == "active"
+
     new_access, new_refresh = rt.rotate!
     render json: token_response(new_access, new_refresh)
   end

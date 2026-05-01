@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_02_09_100024) do
+ActiveRecord::Schema[8.0].define(version: 2026_05_01_000005) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -22,6 +22,75 @@ ActiveRecord::Schema[8.0].define(version: 2026_02_09_100024) do
     t.datetime "updated_at", null: false
     t.index ["token"], name: "index_auth_tokens_on_token", unique: true
     t.index ["user_id"], name: "index_auth_tokens_on_user_id"
+  end
+
+  create_table "oauth_access_tokens", force: :cascade do |t|
+    t.string "token", null: false
+    t.string "user_id", null: false
+    t.bigint "application_id", null: false
+    t.jsonb "scopes", default: [], null: false
+    t.datetime "expires_at", null: false
+    t.datetime "revoked_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["application_id"], name: "index_oauth_access_tokens_on_application_id"
+    t.index ["token"], name: "index_oauth_access_tokens_on_token", unique: true
+    t.index ["user_id"], name: "index_oauth_access_tokens_on_user_id"
+  end
+
+  create_table "oauth_applications", force: :cascade do |t|
+    t.string "client_id", null: false
+    t.string "client_secret_digest", null: false
+    t.string "name", null: false
+    t.jsonb "redirect_uris", default: [], null: false
+    t.jsonb "allowed_scopes", default: [], null: false
+    t.string "status", default: "draft", null: false
+    t.string "owner_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["client_id"], name: "index_oauth_applications_on_client_id", unique: true
+    t.index ["owner_id"], name: "index_oauth_applications_on_owner_id"
+  end
+
+  create_table "oauth_authorization_codes", force: :cascade do |t|
+    t.string "code", null: false
+    t.string "user_id", null: false
+    t.bigint "application_id", null: false
+    t.jsonb "scopes", default: [], null: false
+    t.string "redirect_uri", null: false
+    t.string "code_challenge", null: false
+    t.string "code_challenge_method", default: "S256", null: false
+    t.datetime "expires_at", null: false
+    t.boolean "used", default: false, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["application_id"], name: "index_oauth_authorization_codes_on_application_id"
+    t.index ["code"], name: "index_oauth_authorization_codes_on_code", unique: true
+    t.index ["user_id"], name: "index_oauth_authorization_codes_on_user_id"
+  end
+
+  create_table "oauth_grants", force: :cascade do |t|
+    t.string "user_id", null: false
+    t.bigint "application_id", null: false
+    t.jsonb "scopes", default: [], null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id", "application_id"], name: "index_oauth_grants_on_user_id_and_application_id", unique: true
+    t.index ["user_id"], name: "index_oauth_grants_on_user_id"
+  end
+
+  create_table "oauth_refresh_tokens", force: :cascade do |t|
+    t.string "token", null: false
+    t.string "user_id", null: false
+    t.bigint "application_id", null: false
+    t.bigint "access_token_id", null: false
+    t.datetime "expires_at", null: false
+    t.datetime "revoked_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["access_token_id"], name: "index_oauth_refresh_tokens_on_access_token_id"
+    t.index ["token"], name: "index_oauth_refresh_tokens_on_token", unique: true
+    t.index ["user_id"], name: "index_oauth_refresh_tokens_on_user_id"
   end
 
   create_table "token_classes", force: :cascade do |t|
@@ -106,4 +175,14 @@ ActiveRecord::Schema[8.0].define(version: 2026_02_09_100024) do
   end
 
   add_foreign_key "auth_tokens", "users"
+  add_foreign_key "oauth_access_tokens", "oauth_applications", column: "application_id"
+  add_foreign_key "oauth_access_tokens", "users"
+  add_foreign_key "oauth_applications", "users", column: "owner_id"
+  add_foreign_key "oauth_authorization_codes", "oauth_applications", column: "application_id"
+  add_foreign_key "oauth_authorization_codes", "users"
+  add_foreign_key "oauth_grants", "oauth_applications", column: "application_id"
+  add_foreign_key "oauth_grants", "users"
+  add_foreign_key "oauth_refresh_tokens", "oauth_access_tokens", column: "access_token_id"
+  add_foreign_key "oauth_refresh_tokens", "oauth_applications", column: "application_id"
+  add_foreign_key "oauth_refresh_tokens", "users"
 end
