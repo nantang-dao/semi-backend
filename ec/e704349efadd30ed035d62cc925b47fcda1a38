@@ -1,0 +1,23 @@
+fly.toml
+  d09588fa00adafee 12-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ece704349efadd30ed035d62cc925b47fcda1a38",
+  "prompts": {
+    "d09588fa00adafee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "46c3e587-d2bf-4425-b1a3-a4fd9a0bba84",
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "human_author": "jiangplus",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
