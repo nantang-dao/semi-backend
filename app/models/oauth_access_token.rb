@@ -7,7 +7,7 @@ class OauthAccessToken < ApplicationRecord
 
   before_validation :generate_token, on: :create
 
-  TTL = 1.hour
+  TTL = 10.years
 
   def self.issue(user:, application:, scopes:)
     create!(
