@@ -150,6 +150,17 @@ class OauthController < ApplicationController
     render json: { result: "ok", applications: apps.map { |a| app_json(a) } }
   end
 
+  # GET /oauth/admin/applications
+  def admin_list_applications
+    apps = OauthApplication.includes(:owner).all
+    render json: {
+      result: "ok",
+      applications: apps.map { |a|
+        app_json(a).merge(owner_id: a.owner_id, owner_handle: a.owner&.handle)
+      }
+    }
+  end
+
   # PATCH /oauth/applications/:id
   def update_application
     user = authenticate_user

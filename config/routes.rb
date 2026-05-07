@@ -50,6 +50,9 @@ Rails.application.routes.draw do
     patch  "applications/:id" => "oauth#update_application"
     delete "applications/:id" => "oauth#destroy_application"
 
+    # Admin endpoints
+    get    "admin/applications" => "oauth#admin_list_applications"
+
     # User grants management
     get    "grants"           => "oauth#list_grants"
     delete "grants/:id"       => "oauth#destroy_grant"
