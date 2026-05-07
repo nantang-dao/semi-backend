@@ -1,0 +1,21 @@
+app/controllers/oauth_controller.rb
+  s_d09588fa00adaf::t_3b5cd611c521ed 153-163
+config/routes.rb
+  s_d09588fa00adaf::t_af5f92a7bbbafb 53-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "dfe81ec0e3dc044cded8ba92f2836db2806fe0bb",
+  "prompts": {},
+  "sessions": {
+    "s_d09588fa00adaf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "46c3e587-d2bf-4425-b1a3-a4fd9a0bba84",
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
