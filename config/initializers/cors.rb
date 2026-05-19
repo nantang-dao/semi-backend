@@ -1,7 +1,7 @@
 Rails.application.config.middleware.insert_before 0, Rack::Cors do
   allow do
     # Semi's own frontend — all routes
-    origins "https://semi.fly.dev", "https://semi-production.fly.dev", "https://semi.ntdao.xyz", "https://app.ntdao.xyz", "https://semi.im", "https://www.semi.im", "http://localhost:3001", "http://localhost:3000"
+    origins "https://semi.fly.dev", "https://semi-production.fly.dev", "https://semi.ntdao.xyz", "https://app.ntdao.xyz", "https://semi.im", "https://www.semi.im", "https://semi.nanaland.xyz", "http://localhost:3001", "http://localhost:3000"
     resource "*", headers: :any, methods: [ :get, :post, :put, :patch, :delete, :options, :head ]
   end
 
