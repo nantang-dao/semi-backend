@@ -1,0 +1,43 @@
+app/controllers/home_controller.rb
+  s_d09588fa00adaf::t_b67543503fd0f9 115-131
+app/controllers/safe_controller.rb
+  s_d09588fa00adaf::t_c7eeea5d033b45 1-290
+db/migrate/20260520000003_create_safe_tables.rb
+  s_d09588fa00adaf::t_70a20a332f43dd 1-64
+app/models/wallet.rb
+  s_d09588fa00adaf::t_d63c27645ace79 2-3,5,7-11,13-19
+app/models/safe_signature.rb
+  s_d09588fa00adaf::t_16697db866eec8 1-36
+app/models/user.rb
+  s_d09588fa00adaf::t_0ba69b7d2364a9 5-6,13-14
+app/models/safe_wallet.rb
+  s_d09588fa00adaf::t_e05bc056ad7068 1-28
+fly.toml
+  s_d09588fa00adaf::t_8bc638823a81a2 13-14
+app/models/safe_owner.rb
+  s_d09588fa00adaf::t_f564af8aa06412 1-26
+config/routes.rb
+  s_d09588fa00adaf::t_ba7026d30f2a8b 34-49
+db/migrate/20260520000001_extend_wallets_for_multisig.rb
+  s_d09588fa00adaf::t_65489dae456e14 1-10
+app/models/safe_transaction.rb
+  s_d09588fa00adaf::t_792bdb4bff80ad 1-38
+db/migrate/20260520000002_migrate_user_wallets.rb
+  s_d09588fa00adaf::t_62c3ab026e8003 1-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "855626acc855c07e7c039d7110310aeb9cd9abce",
+  "prompts": {},
+  "sessions": {
+    "s_d09588fa00adaf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "46c3e587-d2bf-4425-b1a3-a4fd9a0bba84",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
