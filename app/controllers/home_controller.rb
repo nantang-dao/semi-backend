@@ -112,7 +112,23 @@ class HomeController < ApplicationController
     user = current_user
     raise AppError.new("User Not Found") unless user
 
-    render json: user.as_json(only: [:id, :handle, :email, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :remaining_gas_credits, :total_used_gas_credits, :encrypted_keys, :can_send_badge])
+    wallets = user.wallets.map do |w|
+      { id: w.id, name: w.name, wallet_type: w.wallet_type, chain: w.chain, chain_id: w.chain_id,
+        evm_chain_address: w.evm_chain_address, is_primary: w.is_primary }
+    end
+
+    render json: user.as_json(only: [:id, :handle, :email, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :remaining_gas_credits, :total_used_gas_credits, :encrypted_keys, :can_send_badge, :active_wallet_id]).merge(wallets: wallets)
+  end
+
+  def set_active_wallet
+    user = current_user
+    raise AppError.new("User Not Found") unless user
+
+    wallet = user.wallets.find_by(id: params[:wallet_id])
+    raise AppError.new("Wallet Not Found") unless wallet
+
+    wallet.set_as_primary!
+    render json: { result: "ok", active_wallet_id: wallet.id }
   end
 
   def remaining_free_transactions

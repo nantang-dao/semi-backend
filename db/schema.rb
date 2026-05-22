@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_05_01_000005) do
+ActiveRecord::Schema[8.0].define(version: 2026_05_20_000003) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -93,6 +93,71 @@ ActiveRecord::Schema[8.0].define(version: 2026_05_01_000005) do
     t.index ["user_id"], name: "index_oauth_refresh_tokens_on_user_id"
   end
 
+  create_table "safe_owners", id: :string, force: :cascade do |t|
+    t.string "safe_wallet_id", null: false
+    t.string "user_id"
+    t.string "evm_address", null: false
+    t.string "label"
+    t.datetime "added_at", null: false
+    t.datetime "removed_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["safe_wallet_id", "evm_address"], name: "index_safe_owners_on_safe_wallet_id_and_evm_address", unique: true
+    t.index ["safe_wallet_id"], name: "index_safe_owners_on_safe_wallet_id"
+  end
+
+  create_table "safe_signatures", id: :string, force: :cascade do |t|
+    t.string "safe_transaction_id", null: false
+    t.string "signer_id"
+    t.string "signer_address", null: false
+    t.string "signature", null: false
+    t.datetime "signed_at", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["safe_transaction_id", "signer_address"], name: "idx_on_safe_transaction_id_signer_address_7813ba0cb4", unique: true
+    t.index ["safe_transaction_id"], name: "index_safe_signatures_on_safe_transaction_id"
+  end
+
+  create_table "safe_transactions", id: :string, force: :cascade do |t|
+    t.string "safe_wallet_id", null: false
+    t.string "proposer_id", null: false
+    t.string "to_address", null: false
+    t.decimal "value", precision: 80, default: "0", null: false
+    t.text "data", default: "0x"
+    t.integer "operation", default: 0, null: false
+    t.decimal "safe_tx_gas", precision: 40, default: "0"
+    t.decimal "base_gas", precision: 40, default: "0"
+    t.decimal "gas_price", precision: 40, default: "0"
+    t.string "gas_token", default: "0x0000000000000000000000000000000000000000"
+    t.string "refund_receiver", default: "0x0000000000000000000000000000000000000000"
+    t.integer "nonce", null: false
+    t.string "safe_tx_hash", null: false
+    t.text "description"
+    t.string "status", default: "pending", null: false
+    t.string "on_chain_tx_hash"
+    t.datetime "executed_at"
+    t.datetime "expires_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["safe_tx_hash"], name: "index_safe_transactions_on_safe_tx_hash", unique: true
+    t.index ["safe_wallet_id", "status"], name: "index_safe_transactions_on_safe_wallet_id_and_status"
+    t.index ["safe_wallet_id"], name: "index_safe_transactions_on_safe_wallet_id"
+  end
+
+  create_table "safe_wallets", id: :string, force: :cascade do |t|
+    t.string "name", null: false
+    t.text "description"
+    t.string "safe_address"
+    t.integer "chain_id", null: false
+    t.integer "threshold", null: false
+    t.string "creator_id", null: false
+    t.string "status", default: "active", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["creator_id"], name: "index_safe_wallets_on_creator_id"
+    t.index ["safe_address"], name: "index_safe_wallets_on_safe_address"
+  end
+
   create_table "token_classes", force: :cascade do |t|
     t.string "token_type", null: false, comment: "ERC20, ERC721, ERC1155"
     t.string "chain", null: false, comment: "ethereum, optimism, solana, etc"
@@ -146,6 +211,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_05_01_000005) do
     t.integer "transaction_count", default: 0, null: false
     t.boolean "can_send_badge", default: false
     t.jsonb "contact_list"
+    t.string "active_wallet_id"
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["handle"], name: "index_users_on_handle", unique: true
     t.index ["phone"], name: "index_users_on_phone", unique: true
@@ -172,6 +238,10 @@ ActiveRecord::Schema[8.0].define(version: 2026_05_01_000005) do
     t.string "format"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.boolean "is_primary", default: false, null: false
+    t.integer "chain_id"
+    t.string "avatar_url"
+    t.index ["user_id", "is_primary"], name: "index_wallets_on_user_id_and_is_primary"
   end
 
   add_foreign_key "auth_tokens", "users"

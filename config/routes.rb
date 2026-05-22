@@ -31,6 +31,22 @@ Rails.application.routes.draw do
   post "remove_wallet" => "home#remove_wallet"
   post "set_contacts" => "home#set_contacts"
   get  "get_contacts" => "home#get_contacts"
+  patch "set_active_wallet" => "home#set_active_wallet"
+
+  scope "/safe" do
+    get    "wallets"                                          => "safe#index"
+    post   "wallets"                                          => "safe#create"
+    get    "wallets/:id"                                      => "safe#show"
+    delete "wallets/:id"                                      => "safe#destroy"
+    patch  "wallets/:id/set_safe_address"                     => "safe#set_safe_address"
+    get    "wallets/:id/owners"                               => "safe#list_owners"
+    get    "wallets/:id/transactions"                         => "safe#list_transactions"
+    post   "wallets/:id/transactions"                         => "safe#create_transaction"
+    get    "wallets/:id/transactions/:tx_id"                  => "safe#show_transaction"
+    delete "wallets/:id/transactions/:tx_id"                  => "safe#cancel_transaction"
+    post   "wallets/:id/transactions/:tx_id/sign"             => "safe#sign_transaction"
+    delete "wallets/:id/transactions/:tx_id/sign"             => "safe#unsign_transaction"
+  end
 
   # OIDC Discovery
   get ".well-known/openid-configuration" => "oauth#openid_configuration"
