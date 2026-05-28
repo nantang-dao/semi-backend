@@ -93,6 +93,8 @@ class OauthController < ApplicationController
     if scopes.include?("profile")
       claims.merge!(
         handle: user.handle,
+        email: user.email,
+        phone: user.phone,
         phone_verified: user.phone_verified,
         email_verified: user.email.present?
       )
