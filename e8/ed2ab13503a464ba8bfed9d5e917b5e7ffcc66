@@ -1,0 +1,19 @@
+app/controllers/oauth_controller.rb
+  s_d09588fa00adaf::t_dd69961d319ba8 96-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "e8ed2ab13503a464ba8bfed9d5e917b5e7ffcc66",
+  "prompts": {},
+  "sessions": {
+    "s_d09588fa00adaf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "46c3e587-d2bf-4425-b1a3-a4fd9a0bba84",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
