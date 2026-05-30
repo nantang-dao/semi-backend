@@ -101,6 +101,20 @@ class HomeController < ApplicationController
     render json: user.as_json(only: [:id, :handle, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :can_send_badge])
   end
 
+  def get_by_address
+    addr = params[:address]&.downcase
+    raise AppError.new("Address required") unless addr.present?
+    # Match either the 4337 smart account address (evm_chain_address) or the EOA
+    # signing key (evm_chain_active_key) so address search resolves the user
+    # whichever one is pasted.
+    user = User.find_by("lower(evm_chain_address) = ?", addr) ||
+           User.find_by("lower(evm_chain_active_key) = ?", addr) ||
+           Wallet.find_by("lower(evm_chain_address) = ?", addr)&.user ||
+           Wallet.find_by("lower(evm_chain_active_key) = ?", addr)&.user
+    raise AppError.new("User Not Found") unless user
+    render json: user.as_json(only: [:id, :handle, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :can_send_badge])
+  end
+
   def get_user
     user = User.find_by(id: params[:id])
     raise AppError.new("User Not Found") unless user
@@ -114,7 +128,8 @@ class HomeController < ApplicationController
 
     wallets = user.wallets.map do |w|
       { id: w.id, name: w.name, wallet_type: w.wallet_type, chain: w.chain, chain_id: w.chain_id,
-        evm_chain_address: w.evm_chain_address, is_primary: w.is_primary }
+        evm_chain_address: w.evm_chain_address, evm_chain_active_key: w.evm_chain_active_key,
+        encrypted_keys: w.encrypted_keys, is_primary: w.is_primary }
     end
 
     render json: user.as_json(only: [:id, :handle, :email, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :remaining_gas_credits, :total_used_gas_credits, :encrypted_keys, :can_send_badge, :active_wallet_id]).merge(wallets: wallets)
@@ -266,5 +281,13 @@ class HomeController < ApplicationController
     user = User.find_by(id: params[:id])
     raise AppError.new("User Not Found") unless user
     render json: { result: "ok", contacts: user.contact_list }
+  end
+
+  def test_email
+    to = params[:to].presence || current_user&.email
+    raise AppError.new("Provide ?to=email@example.com or be logged in") unless to.present?
+    code = params[:code].presence || rand(100_000..999_999)
+    SigninMailer.with(code: code, recipient: to).signin.deliver_now!
+    render json: { result: "ok", sent_to: to, code: code }
   end
 end

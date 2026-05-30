@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_05_20_000003) do
+ActiveRecord::Schema[8.0].define(version: 2026_05_29_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -154,7 +154,10 @@ ActiveRecord::Schema[8.0].define(version: 2026_05_20_000003) do
     t.string "status", default: "active", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "salt_nonce"
+    t.string "predicted_address"
     t.index ["creator_id"], name: "index_safe_wallets_on_creator_id"
+    t.index ["predicted_address"], name: "index_safe_wallets_on_predicted_address"
     t.index ["safe_address"], name: "index_safe_wallets_on_safe_address"
   end
 

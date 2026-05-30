@@ -1,6 +1,6 @@
 class SafeController < ApplicationController
   before_action :require_auth
-  before_action :set_safe_wallet, only: [ :show, :update, :destroy, :list_transactions, :create_transaction, :show_transaction, :cancel_transaction, :sign_transaction, :unsign_transaction, :list_owners ]
+  before_action :set_safe_wallet, only: [ :show, :destroy, :set_safe_address, :list_transactions, :create_transaction, :show_transaction, :cancel_transaction, :sign_transaction, :unsign_transaction, :list_owners ]
 
   # GET /safe/wallets
   def index
@@ -21,7 +21,9 @@ class SafeController < ApplicationController
       name:      params[:name],
       chain_id:  params[:chain_id],
       threshold: params[:threshold],
-      description: params[:description]
+      description: params[:description],
+      salt_nonce:        params[:salt_nonce]&.to_s,
+      predicted_address: params[:predicted_address]&.downcase
     )
 
     unless safe.valid?
@@ -35,9 +37,11 @@ class SafeController < ApplicationController
     # Build owner list — creator always included
     owner_entries = build_owner_entries(owners_params)
 
-    # Ensure creator is in the list
-    creator_address = current_user.evm_chain_address&.downcase
-    unless owner_entries.any? { |o| o[:evm_address] == creator_address }
+    # Ensure creator is in the list.
+    # Owners are the EOA signing keys (evm_chain_active_key), NOT the 4337 smart
+    # account address — Safe verifies owner signatures via ecrecover (Option A).
+    creator_address = (current_user.evm_chain_active_key || current_user.primary_wallet&.evm_chain_active_key)&.downcase
+    if creator_address && owner_entries.none? { |o| o[:evm_address] == creator_address }
       owner_entries.unshift({ evm_address: creator_address, user_id: current_user.id, label: current_user.handle || "Me" })
     end
 
@@ -168,7 +172,7 @@ class SafeController < ApplicationController
     raise AppError.new("Transaction Not Found") unless tx
     raise AppError.new("Cannot unsign a #{tx.status} transaction") unless tx.status == "pending"
 
-    signer_address = current_user.evm_chain_address&.downcase
+    signer_address = current_user.evm_chain_active_key&.downcase
     sig = tx.safe_signatures.find_by(signer_id: current_user.id)
     raise AppError.new("No signature found") unless sig
 
@@ -207,7 +211,7 @@ class SafeController < ApplicationController
 
       if user_id.present? && evm_address.blank?
         u = User.find_by(id: user_id)
-        evm_address = u&.evm_chain_address
+        evm_address = u&.evm_chain_active_key
         label ||= u&.handle
       end
 
@@ -231,6 +235,8 @@ class SafeController < ApplicationController
       name:         w.name,
       description:  w.description,
       safe_address: w.safe_address,
+      predicted_address: w.predicted_address,
+      salt_nonce:   w.salt_nonce,
       chain_id:     w.chain_id,
       threshold:    w.threshold,
       owners_count: w.active_owners.count,

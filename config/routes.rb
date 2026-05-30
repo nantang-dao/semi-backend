@@ -14,6 +14,7 @@ Rails.application.routes.draw do
   post "set_handle" => "home#set_handle"
   post "set_image_url" => "home#set_image_url"
   get  "get_by_handle" => "home#get_by_handle"
+  get  "get_by_address" => "home#get_by_address"
   get  "get_user" => "home#get_user"
   get  "get_me" => "home#get_me"
   get  "remaining_free_transactions" => "home#remaining_free_transactions"
@@ -74,5 +75,8 @@ Rails.application.routes.draw do
     delete "grants/:id"       => "oauth#destroy_grant"
   end
 
-  # Defines the root path route ("/")
+  # Send a real test email — dev/staging only
+  if Rails.env.development? || ENV["ALLOW_TEST_EMAIL"] == "true"
+    get "test_email" => "home#test_email"
+  end
 end
