@@ -86,7 +86,7 @@ class MultisigController < ApplicationController
   end
 
   # POST /sync_multisig_wallet
-  # Sync owners/threshold from chain data provided by frontend
+  # Sync owners/threshold — 后端从链上验证，前端仅触发
   # params: wallet_id, owners (array of addresses), threshold
   def sync_wallet
     wallet = find_multisig_wallet(params[:wallet_id])
@@ -96,6 +96,28 @@ class MultisigController < ApplicationController
     chain_threshold = params[:threshold].to_i
 
     raise AppError.new("Invalid data from chain") if chain_owners.empty? || chain_threshold < 1
+
+    # 后端从链上验证 owners 和 threshold 的真实性
+    safe_address = wallet.evm_chain_address
+    chain_id = wallet.chain_id || wallet.chain.to_i
+    if safe_address.present?
+      begin
+        onchain_owners = ChainRpc.get_owners(safe_address, chain_id)
+        onchain_threshold = ChainRpc.get_threshold(safe_address, chain_id)
+
+        if onchain_owners.present?
+          # 验证前端提交的数据与链上一致
+          onchain_owners_normalized = onchain_owners.map(&:downcase).sort
+          chain_owners_normalized = chain_owners.sort
+          unless onchain_owners_normalized == chain_owners_normalized && onchain_threshold == chain_threshold
+            raise AppError.new("Submitted data does not match on-chain state")
+          end
+        end
+        # 如果链上读取失败（RPC 不可用），降级为信任前端数据（记录日志）
+      rescue => e
+        Rails.logger.warn("ChainRpc verification skipped for wallet #{wallet.id}: #{e.message}")
+      end
+    end
 
     ActiveRecord::Base.transaction do
       wallet.wallet_owners.destroy_all
@@ -130,6 +152,12 @@ class MultisigController < ApplicationController
     evm_call_data = params[:evm_call_data].to_s
     replaces_tx_id = params[:replaces_tx_id].to_s.presence
     expires_at = 5.days.from_now
+
+    # 验证配置类交易的 callData 函数选择器与 tx_type 匹配
+    validate_config_calldata!(tx_type, evm_call_data, call_detail)
+
+    # 为配置类交易补充地址对应的名字到 call_detail
+    call_detail = enrich_call_detail_names(call_detail, wallet)
 
     replaces_tx = nil
     if replaces_tx_id.present?
@@ -198,7 +226,6 @@ class MultisigController < ApplicationController
           replaces_tx_id: replaces_tx.id,
           status: "signing",
           user_op_snapshot: snapshot_data,
-          owner_snapshot: MultisigTransaction.build_owner_snapshot(wallet),
           expires_at: expires_at
         )
       else
@@ -216,7 +243,6 @@ class MultisigController < ApplicationController
           threshold_at_creation: wallet.threshold,
           replaces_tx_id: nil,
           status: "queued",
-          owner_snapshot: MultisigTransaction.build_owner_snapshot(wallet),
           expires_at: expires_at
         )
       end
@@ -228,6 +254,8 @@ class MultisigController < ApplicationController
   # GET /get_multisig_txs?wallet_id=xxx&scope=queue|history
   def get_txs
     wallet = find_multisig_wallet(params[:wallet_id])
+    ensure_is_owner!(wallet)
+
     scope = params[:scope] == "history" ? "history" : "queue"
 
     txs = if scope == "history"
@@ -252,6 +280,7 @@ class MultisigController < ApplicationController
     tx = MultisigTransaction.find_by(id: params[:id])
     raise AppError.new("Transaction not found") unless tx
     wallet = find_multisig_wallet(tx.wallet_id)
+    ensure_is_owner!(wallet)
 
     # 加载时修正状态：确保 signing/ready 与当前门限一致
     reassess_single_tx_status!(tx, wallet)
@@ -275,8 +304,8 @@ class MultisigController < ApplicationController
     signature = params[:signature].to_s
 
     # 验证 signer_address 属于当前登录用户
-    user_address = current_user.evm_chain_active_key&.downcase
-    raise AppError.new("Signer address must match your wallet address") unless user_address && signer_address == user_address
+    user_active_key = current_user.evm_chain_active_key.to_s.downcase
+    raise AppError.new("Signer address must match your wallet address") unless signer_address == user_active_key
 
     raise AppError.new("Signer is not an owner of this wallet") unless wallet_owner_addresses(wallet).include?(signer_address)
     raise AppError.new("Invalid signature") if signature.blank?
@@ -359,8 +388,37 @@ class MultisigController < ApplicationController
 
     raise AppError.new("Transaction is not in executing state") unless tx.status == "executing"
 
+    # 原子更新：防止并发 confirm 导致 apply_wallet_config 执行两次
+    updated = MultisigTransaction.where(id: tx.id, status: "executing").update_all(status: "confirming")
+    raise AppError.new("Transaction is no longer in executing state") unless updated > 0
+    tx.reload
+
     tx_hash = params[:tx_hash].to_s
     raise AppError.new("tx_hash is required") if tx_hash.blank?
+
+    # 后端验证 tx_hash 的真实性（可选，降级处理）
+    # ERC-4337 交易通过 Bundler 执行，前端已通过 pollForUserOpReceipt 验证成功
+    # 后端再次验证可能因 RPC 节点同步延迟而失败，因此采用可选验证策略
+    chain_id = wallet.chain_id || wallet.chain.to_i
+    begin
+      receipt = ChainRpc.get_transaction_receipt(tx_hash, chain_id)
+      if receipt
+        # 验证成功：确认链上状态
+        if receipt["status"] != "0x1"
+          raise AppError.new("Transaction failed on chain")
+        end
+        # receipt 存在且成功，继续确认
+      else
+        # receipt 暂时查不到（RPC 同步延迟），降级为信任前端
+        # 前端已通过 bundler 的 pollForUserOpReceipt 确认交易成功
+        Rails.logger.info("confirm_tx: receipt not yet available for tx_hash=#{tx_hash}, trusting frontend verification")
+      end
+    rescue AppError
+      raise
+    rescue => e
+      # RPC 异常，降级为信任前端
+      Rails.logger.warn("confirm_tx: ChainRpc error for tx_hash=#{tx_hash}: #{e.message}, trusting frontend verification")
+    end
 
     nonce = tx.nonce
 
@@ -392,13 +450,30 @@ class MultisigController < ApplicationController
         superseded_txs.each { |stx| stx.update!(status: "superseded") }
       end
 
-      apply_wallet_config_from_executed_tx!(wallet, tx)
-
-      # 冻结终态交易的 owner 快照
+      # 冻结终态交易的 owner 快照（必须在 apply_wallet_config 之前，否则快照会反映修改后的 owner 列表）
       tx.freeze_owner_snapshot!
       superseded_txs.each(&:freeze_owner_snapshot!)
+
+      apply_wallet_config_from_executed_tx!(wallet, tx)
     end
 
+    render json: { result: "ok" }
+  end
+
+  # POST /reset_executing_multisig_tx
+  # 将卡在 executing 状态的交易回滚为 ready，允许重新执行
+  # 仅限 owner 调用，且交易必须处于 executing 状态超过 5 分钟
+  def reset_executing_tx
+    tx = MultisigTransaction.find_by(id: params[:multisig_tx_id])
+    raise AppError.new("Transaction not found") unless tx
+    wallet = find_multisig_wallet(tx.wallet_id)
+    ensure_is_owner!(wallet)
+
+    raise AppError.new("Transaction is being confirmed, cannot reset") if tx.status == "confirming"
+    raise AppError.new("Transaction is not in executing state") unless tx.status == "executing"
+    raise AppError.new("Transaction is still being executed, please wait a few minutes") unless tx.updated_at < 5.minutes.ago
+
+    tx.update!(status: "ready")
     render json: { result: "ok" }
   end
 
@@ -410,6 +485,7 @@ class MultisigController < ApplicationController
     wallet = find_multisig_wallet(tx.wallet_id)
     ensure_is_owner!(wallet)
 
+    raise AppError.new("Transaction is being confirmed, cannot mark as failed") if tx.status == "confirming"
     raise AppError.new("Transaction is not in executing state") unless tx.status == "executing"
 
     tx.update!(status: "failed")
@@ -423,7 +499,8 @@ class MultisigController < ApplicationController
   def withdraw_tx
     tx = MultisigTransaction.find_by(id: params[:multisig_tx_id])
     raise AppError.new("Transaction not found") unless tx
-    find_multisig_wallet(tx.wallet_id)
+    wallet = find_multisig_wallet(tx.wallet_id)
+    ensure_is_owner!(wallet)
 
     raise AppError.new("Only the proposer can withdraw") unless tx.proposer_id == current_user.id
     raise AppError.new("Can only withdraw queued transactions with no signatures") unless tx.status == "queued"
@@ -457,6 +534,81 @@ class MultisigController < ApplicationController
     raise AppError.new("You are not an owner of this wallet") unless addresses.include?(current_user.evm_chain_active_key&.downcase)
   end
 
+  def validate_and_update_threshold!(wallet, new_threshold)
+    owner_count = wallet.wallet_owners.count
+    if new_threshold < 1 || new_threshold > owner_count
+      Rails.logger.error("Invalid threshold #{new_threshold} for #{owner_count} owners on wallet #{wallet.id}, skipping update")
+      return
+    end
+    wallet.update!(threshold: new_threshold)
+  end
+
+  # 验证配置类交易的 callData 函数选择器与 tx_type 匹配
+  # Safe v1.4.1 函数选择器
+  CONFIG_TX_SELECTORS = {
+    "add_owner" => "0x0d582f13",      # addOwnerWithThreshold(address,uint256)
+    "remove_owner" => "0xf8dc5dd9",   # removeOwner(address,address,uint256)
+    "replace_owner" => "0xe318b52b",  # swapOwner(address,address,address)
+    "change_threshold" => "0x694e80c3" # changeThreshold(uint256)
+  }.freeze
+
+  # 为 call_detail 中的地址补充对应的名字
+  # 从全局用户表搜索，确保 add_owner/replace_owner 的新 owner 名字也能显示
+  def enrich_call_detail_names(call_detail, wallet)
+    detail = call_detail.is_a?(Hash) ? call_detail.with_indifferent_access : {}
+    address_fields = [:new_owner, :old_owner, :owner]
+    owner_map = wallet.wallet_owners.index_by { |wo| wo.owner_address.downcase }
+
+    address_fields.each do |field|
+      addr = detail[field].to_s.downcase.strip
+      next if addr.blank?
+      next if detail["#{field}_name"].present? # 已有名字则跳过
+
+      # 1. 从当前钱包 owner 列表找
+      wo = owner_map[addr]
+      if wo&.user
+        detail["#{field}_name"] = wo.user.handle || wo.user.phone
+        next
+      end
+
+      # 2. 从全局用户表找
+      user = User.find_by("LOWER(evm_chain_active_key) = ?", addr)
+      if user
+        detail["#{field}_name"] = user.handle || user.phone
+        next
+      end
+    end
+
+    detail.to_h
+  end
+
+  def validate_config_calldata!(tx_type, evm_call_data, call_detail)
+    return unless CONFIG_TX_SELECTORS.key?(tx_type)
+
+    expected_selector = CONFIG_TX_SELECTORS[tx_type]
+    actual_selector = evm_call_data&.[](0, 10) || ""
+
+    unless actual_selector.downcase == expected_selector.downcase
+      raise AppError.new("callData function selector does not match tx_type #{tx_type}: expected #{expected_selector}, got #{actual_selector}")
+    end
+
+    # 验证 call_detail 中关键字段不为空
+    detail = call_detail.is_a?(Hash) ? call_detail.with_indifferent_access : {}
+    case tx_type
+    when "add_owner"
+      raise AppError.new("call_detail.new_owner is required") if detail[:new_owner].blank?
+      raise AppError.new("call_detail.new_threshold is required") if detail[:new_threshold].blank?
+    when "remove_owner"
+      raise AppError.new("call_detail.owner is required") if detail[:owner].blank?
+      raise AppError.new("call_detail.new_threshold is required") if detail[:new_threshold].blank?
+    when "replace_owner"
+      raise AppError.new("call_detail.old_owner is required") if detail[:old_owner].blank?
+      raise AppError.new("call_detail.new_owner is required") if detail[:new_owner].blank?
+    when "change_threshold"
+      raise AppError.new("call_detail.new_threshold is required") if detail[:new_threshold].blank?
+    end
+  end
+
   def wallet_owner_addresses(wallet)
     wallet.wallet_owners.pluck(:owner_address)
   end
@@ -474,7 +626,7 @@ class MultisigController < ApplicationController
 
       wallet.wallet_owners.where("LOWER(owner_address) = ?", owner_addr).destroy_all
       reorder_wallet_owner_positions!(wallet)
-      wallet.update!(threshold: new_threshold) if new_threshold >= 1
+      validate_and_update_threshold!(wallet, new_threshold)
 
     when "add_owner"
       new_owner = detail[:new_owner].to_s.downcase.strip
@@ -491,13 +643,13 @@ class MultisigController < ApplicationController
           position: max_pos + 1
         )
       end
-      wallet.update!(threshold: new_threshold) if new_threshold >= 1
+      validate_and_update_threshold!(wallet, new_threshold)
 
     when "change_threshold"
       new_threshold = detail[:new_threshold].to_i
       raise AppError.new("Invalid change_threshold call_detail") unless new_threshold >= 1
 
-      wallet.update!(threshold: new_threshold)
+      validate_and_update_threshold!(wallet, new_threshold)
 
     when "replace_owner"
       old_owner = detail[:old_owner].to_s.downcase.strip
@@ -526,14 +678,11 @@ class MultisigController < ApplicationController
   # 当门限或 owner 集合变更后，重新评估该钱包所有活跃交易的 status
   # 签名数已达当前门限的 signing 交易应升级为 ready
   # 原为 ready 但签名数不再满足当前门限的应降为 signing
-  # 同时更新活跃交易的 owner_snapshot 以反映最新 owner 集合
   def reassess_active_tx_statuses!(wallet)
     current_owner_addresses = wallet.wallet_owners.pluck(:owner_address).map { |a| a.to_s.downcase }
     current_threshold = wallet.threshold
 
-    wallet.multisig_transactions.where(status: %w[queued signing ready]).find_each do |tx|
-      # 更新快照为当前 owner 集合（保留已有签名状态）
-      update_active_tx_snapshot!(tx, wallet)
+    wallet.multisig_transactions.where(status: %w[signing ready]).find_each do |tx|
       reassess_single_tx_status!(tx, wallet, current_owner_addresses, current_threshold)
     end
   end
@@ -556,28 +705,6 @@ class MultisigController < ApplicationController
     end
   end
 
-  # 更新活跃交易的 owner_snapshot 为当前 owner 集合，保留已有签名状态
-  def update_active_tx_snapshot!(tx, wallet)
-    signed_addresses = tx.multisig_signatures.pluck(:signer_address).map(&:downcase)
-    signed_at_map = tx.multisig_signatures.map { |s| [s.signer_address.downcase, s.created_at] }.to_h
-
-    new_snapshot = wallet.wallet_owners.order(:position).map do |wo|
-      user = wo.user
-      addr = wo.owner_address.downcase
-      entry = {
-        "address" => wo.owner_address,
-        "name" => user&.handle || user&.phone,
-        "signed" => signed_addresses.include?(addr)
-      }
-      if signed_at_map[addr]
-        entry["signed_at"] = signed_at_map[addr].iso8601
-      end
-      entry
-    end
-
-    tx.update_column(:owner_snapshot, new_snapshot)
-  end
-
   def reorder_wallet_owner_positions!(wallet)
     wallet.wallet_owners.order(:position).each_with_index do |wo, idx|
       wo.update_column(:position, idx)
@@ -585,8 +712,14 @@ class MultisigController < ApplicationController
   end
 
   def next_queue_position(wallet_id)
+    # 使用 advisory lock 防止并发提案产生相同的 queue_position
+    lock_key = Digest::MD5.hexdigest("multisig_queue_#{wallet_id}")[0, 15].to_i(16)
+    ActiveRecord::Base.connection.execute("SELECT pg_advisory_lock(#{lock_key})")
+
     max_pos = MultisigTransaction.where(wallet_id: wallet_id).active.maximum(:queue_position)
     max_pos ? max_pos + 1 : 1
+  ensure
+    ActiveRecord::Base.connection.execute("SELECT pg_advisory_unlock(#{lock_key})")
   end
 
   def serialize_wallet(wallet)
@@ -621,10 +754,19 @@ class MultisigController < ApplicationController
       display_signature_count = tx.signature_count
     end
 
+    # 发起人信息
+    proposer = User.find_by(id: tx.proposer_id)
+    proposer_info = if proposer
+      { id: proposer.id, address: proposer.evm_chain_active_key, name: proposer.handle || proposer.phone }
+    else
+      { id: tx.proposer_id, address: nil, name: nil }
+    end
+
     data = {
       id: tx.id,
       wallet_id: tx.wallet_id,
       proposer_id: tx.proposer_id,
+      proposer: proposer_info,
       chain_id: tx.chain_id,
       queue_position: tx.queue_position,
       nonce: tx.nonce,

@@ -4,7 +4,7 @@ class MultisigTransaction < ApplicationRecord
   has_many :multisig_signatures, dependent: :destroy
   belongs_to :replaced_tx, class_name: "MultisigTransaction", foreign_key: "replaces_tx_id", optional: true
 
-  STATUSES = %w[queued signing ready executing executed failed withdrawn superseded expired].freeze
+  STATUSES = %w[queued signing ready executing confirming executed failed withdrawn superseded expired].freeze
   TERMINAL_STATUSES = %w[executed failed withdrawn superseded expired].freeze
   TX_TYPES = %w[transfer erc20_transfer add_owner remove_owner change_threshold cancel replace_owner].freeze
 
@@ -55,36 +55,36 @@ class MultisigTransaction < ApplicationRecord
     TERMINAL_STATUSES.include?(status)
   end
 
-  # 构建提案时的 owner 快照（所有 owner 均为 signed: false）
-  def self.build_owner_snapshot(wallet)
-    owners = wallet.wallet_owners.order(:position).map do |wo|
-      user = wo.user
-      {
-        address: wo.owner_address,
-        name: user&.handle || user&.phone,
-        signed: false
-      }
-    end
-    owners
-  end
-
-  # 交易进入终态时，冻结快照：更新每个 owner 的签名状态和时间
+  # 交易进入终态时，从当前钱包 owner 列表 + 签名记录构建快照
+  # 这样快照反映的是执行那一刻的真实权限状态
+  # 同时保存发起人信息，确保历史可追溯
   def freeze_owner_snapshot!
-    return if owner_snapshot.blank?
-
     signed_addresses = multisig_signatures.pluck(:signer_address).map(&:downcase)
     signed_at_map = multisig_signatures.map { |s| [s.signer_address.downcase, s.created_at] }.to_h
 
-    updated = owner_snapshot.map do |entry|
-      addr = entry["address"].to_s.downcase
+    owners = wallet.wallet_owners.order(:position).map do |wo|
+      addr = wo.owner_address.downcase
+      user = wo.user
+      entry = {
+        address: wo.owner_address,
+        name: user&.handle || user&.phone,
+        signed: signed_addresses.include?(addr)
+      }
       if signed_addresses.include?(addr)
-        entry.merge("signed" => true, "signed_at" => signed_at_map[addr]&.iso8601)
-      else
-        entry.merge("signed" => false)
+        entry[:signed_at] = signed_at_map[addr]&.iso8601
       end
+      entry
     end
 
-    update_column(:owner_snapshot, updated)
+    # 保存发起人信息
+    proposer_user = User.find_by(id: proposer_id)
+    proposer_entry = if proposer_user
+      { id: proposer_id, address: proposer_user.evm_chain_active_key, name: proposer_user.handle || proposer_user.phone }
+    else
+      { id: proposer_id }
+    end
+
+    update_column(:owner_snapshot, { owners: owners, proposer: proposer_entry })
   end
 
   private
