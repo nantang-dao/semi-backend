@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_05_01_000005) do
+ActiveRecord::Schema[8.0].define(version: 2026_06_03_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -22,6 +22,39 @@ ActiveRecord::Schema[8.0].define(version: 2026_05_01_000005) do
     t.datetime "updated_at", null: false
     t.index ["token"], name: "index_auth_tokens_on_token", unique: true
     t.index ["user_id"], name: "index_auth_tokens_on_user_id"
+  end
+
+  create_table "multisig_signatures", id: false, force: :cascade do |t|
+    t.string "multisig_transaction_id", null: false
+    t.string "signer_address", null: false
+    t.text "signature", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["multisig_transaction_id", "signer_address"], name: "idx_multisig_sigs_unique", unique: true
+    t.index ["multisig_transaction_id"], name: "index_multisig_signatures_on_multisig_transaction_id"
+  end
+
+  create_table "multisig_transactions", id: :string, force: :cascade do |t|
+    t.string "wallet_id", null: false
+    t.string "proposer_id", null: false
+    t.integer "chain_id", null: false
+    t.integer "queue_position"
+    t.string "nonce"
+    t.string "tx_type", null: false
+    t.jsonb "call_detail", default: {}, null: false
+    t.text "evm_call_data", default: "", null: false
+    t.jsonb "user_op_snapshot"
+    t.integer "threshold_at_creation", null: false
+    t.string "replaces_tx_id"
+    t.string "status", default: "queued", null: false
+    t.string "tx_hash"
+    t.datetime "expires_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.jsonb "owner_snapshot"
+    t.index ["wallet_id", "queue_position"], name: "index_multisig_transactions_on_wallet_id_and_queue_position"
+    t.index ["wallet_id", "status"], name: "index_multisig_transactions_on_wallet_id_and_status"
+    t.index ["wallet_id"], name: "index_multisig_transactions_on_wallet_id"
   end
 
   create_table "oauth_access_tokens", force: :cascade do |t|
@@ -161,6 +194,17 @@ ActiveRecord::Schema[8.0].define(version: 2026_05_01_000005) do
     t.datetime "updated_at", null: false
   end
 
+  create_table "wallet_owners", id: :string, force: :cascade do |t|
+    t.string "wallet_id", null: false
+    t.string "user_id"
+    t.string "owner_address", null: false
+    t.integer "position", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["wallet_id", "owner_address"], name: "index_wallet_owners_on_wallet_id_and_owner_address", unique: true
+    t.index ["wallet_id"], name: "index_wallet_owners_on_wallet_id"
+  end
+
   create_table "wallets", id: :string, force: :cascade do |t|
     t.string "user_id"
     t.string "name"
@@ -172,6 +216,8 @@ ActiveRecord::Schema[8.0].define(version: 2026_05_01_000005) do
     t.string "format"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.integer "threshold", default: 1, null: false
+    t.integer "chain_id"
   end
 
   add_foreign_key "auth_tokens", "users"
