@@ -46,6 +46,7 @@ Rails.application.routes.draw do
   post "fail_multisig_tx"             => "multisig#fail_tx"
   post "reset_executing_multisig_tx"  => "multisig#reset_executing_tx"
   post "withdraw_multisig_tx"         => "multisig#withdraw_tx"
+  get  "lookup_multisig_tx_memos"    => "multisig#lookup_tx_memos"
 
   # OIDC Discovery
   get ".well-known/openid-configuration" => "oauth#openid_configuration"

@@ -60,9 +60,26 @@ class MultisigController < ApplicationController
                                   .pluck(:wallet_id)
     wallets = Wallet.where(id: owned_addresses, wallet_type: "multisig").order(created_at: :desc)
 
+    # Compute pending signature counts for each wallet
+    user_addr = current_user.evm_chain_active_key&.downcase
+    pending_counts = {}
+    if user_addr.present?
+      wallets.each do |w|
+        # Count active transactions where the user hasn't signed yet
+        active_txs = w.multisig_transactions.active.includes(:multisig_signatures).to_a
+        count = 0
+        active_txs.each do |tx|
+          has_signed = tx.multisig_signatures.where("LOWER(signer_address) = ?", user_addr).exists?
+          count += 1 unless has_signed
+        end
+        pending_counts[w.id] = count
+      end
+    end
+
     render json: {
       result: "ok",
-      wallets: wallets.map { |w| serialize_wallet(w) }
+      wallets: wallets.map { |w| serialize_wallet(w) },
+      pending_signature_counts: pending_counts
     }
   end
 
@@ -151,6 +168,8 @@ class MultisigController < ApplicationController
     call_detail = params[:call_detail].to_unsafe_h rescue {}
     evm_call_data = params[:evm_call_data].to_s
     replaces_tx_id = params[:replaces_tx_id].to_s.presence
+    memo = params[:memo].to_s.strip.presence
+    sender_note = params[:sender_note].to_s.strip.presence
     expires_at = 5.days.from_now
 
     # 验证配置类交易的 callData 函数选择器与 tx_type 匹配
@@ -226,7 +245,9 @@ class MultisigController < ApplicationController
           replaces_tx_id: replaces_tx.id,
           status: "signing",
           user_op_snapshot: snapshot_data,
-          expires_at: expires_at
+          expires_at: expires_at,
+          memo: memo,
+          sender_note: sender_note
         )
       else
         raise AppError.new("replaces_tx_id is only valid for cancel transactions") if replaces_tx_id.present?
@@ -243,7 +264,9 @@ class MultisigController < ApplicationController
           threshold_at_creation: wallet.threshold,
           replaces_tx_id: nil,
           status: "queued",
-          expires_at: expires_at
+          expires_at: expires_at,
+          memo: memo,
+          sender_note: sender_note
         )
       end
     end
@@ -521,6 +544,35 @@ class MultisigController < ApplicationController
     render json: { result: "ok" }
   end
 
+  # GET /lookup_multisig_tx_memos?tx_hashes=hash1,hash2,...
+  # 根据链上 tx_hash 批量查找多签交易的备注（memo + sender_note）
+  # 同时查 multisig_transactions 和 transactions 表，大小写不敏感
+  def lookup_tx_memos
+    hashes_param = params[:tx_hashes].to_s
+    raise AppError.new("tx_hashes is required") if hashes_param.blank?
+
+    tx_hashes = hashes_param.split(",").map(&:strip).reject(&:blank?)
+    raise AppError.new("No valid tx_hashes") if tx_hashes.empty?
+
+    memos = {}
+
+    downcased = tx_hashes.map(&:downcase)
+    MultisigTransaction.where("LOWER(tx_hash) IN (?)", downcased).each do |tx|
+      next unless tx.tx_hash.present?
+      memos[tx.tx_hash.downcase] = { memo: tx.memo, sender_note: tx.sender_note }
+    end
+
+    Transaction.where("LOWER(tx_hash) IN (?)", downcased).each do |tx|
+      next unless tx.tx_hash.present?
+      key = tx.tx_hash.downcase
+      unless memos.key?(key)
+        memos[key] = { memo: tx.memo, sender_note: tx.sender_note }
+      end
+    end
+
+    render json: { result: "ok", memos: memos }
+  end
+
   private
 
   def find_multisig_wallet(wallet_id)
@@ -784,6 +836,8 @@ class MultisigController < ApplicationController
       eligible_signature_count: display_eligible_count,
       signer_addresses: signer_addresses,
       owner_snapshot: tx.owner_snapshot,
+      memo: tx.memo,
+      sender_note: tx.sender_note,
       created_at: tx.created_at,
       updated_at: tx.updated_at
     }
