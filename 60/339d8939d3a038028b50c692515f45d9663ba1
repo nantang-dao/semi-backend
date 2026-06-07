@@ -1,0 +1,19 @@
+.kamal/secrets
+  s_9eab7a984449f4::t_fea3cfba7d3c3b 11-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "60339d8939d3a038028b50c692515f45d9663ba1",
+  "prompts": {},
+  "sessions": {
+    "s_9eab7a984449f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b85d1d5f-5ea1-49b5-95d3-79ef5e3b1414",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
