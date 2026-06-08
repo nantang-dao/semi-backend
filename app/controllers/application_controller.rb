@@ -1,4 +1,11 @@
 class AppError < StandardError
+  attr_reader :code, :data
+
+  def initialize(message, code: nil, data: {})
+    super(message)
+    @code = code
+    @data = data || {}
+  end
 end
 
 class AuthError < AppError
@@ -26,7 +33,10 @@ class ApplicationController < ActionController::API
 
     rescue_from AppError do |err|
         Rails.logger.info err.message
-        render json: { result: "error", message: err.message }, status: 400
+        body = { result: "error", message: err.message }
+        body[:code] = err.code if err.code.present?
+        body.merge!(err.data) if err.data.present?
+        render json: body, status: 400
     end
 
     rescue_from AuthError do |err|

@@ -32,6 +32,22 @@ Rails.application.routes.draw do
   post "set_contacts" => "home#set_contacts"
   get  "get_contacts" => "home#get_contacts"
 
+  # Multisig
+  post "create_multisig_wallet"       => "multisig#create_wallet"
+  get  "get_multisig_wallets"         => "multisig#get_wallets"
+  get  "get_multisig_wallet_owners"   => "multisig#get_wallet_owners"
+  post "sync_multisig_wallet"         => "multisig#sync_wallet"
+  post "propose_multisig_tx"          => "multisig#propose_tx"
+  get  "get_multisig_txs"             => "multisig#get_txs"
+  get  "get_multisig_tx"              => "multisig#get_tx"
+  post "submit_multisig_signature"    => "multisig#submit_signature"
+  post "execute_multisig_tx"          => "multisig#execute_tx"
+  post "confirm_multisig_tx"          => "multisig#confirm_tx"
+  post "fail_multisig_tx"             => "multisig#fail_tx"
+  post "reset_executing_multisig_tx"  => "multisig#reset_executing_tx"
+  post "withdraw_multisig_tx"         => "multisig#withdraw_tx"
+  get  "lookup_multisig_tx_memos"    => "multisig#lookup_tx_memos"
+
   # OIDC Discovery
   get ".well-known/openid-configuration" => "oauth#openid_configuration"
 
