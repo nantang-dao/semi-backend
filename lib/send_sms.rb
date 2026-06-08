@@ -97,8 +97,8 @@ module SendSms
         "SignatureNonce"   => SecureRandom.hex(16),
         "Timestamp"        => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "PhoneNumbers"     => phone.to_s,
-        "SignName"         => ENV["ALIYUN_SMS_SIGN_NAME"],
-        "TemplateCode"     => ENV["ALIYUN_SMS_TEMPLATE_CODE"],
+        "SignName"         => "深圳市岑赫科技",
+        "TemplateCode"     => "SMS_319855540",
         "TemplateParam"    => JSON.generate({ "code" => code.to_s }),
       }
 
