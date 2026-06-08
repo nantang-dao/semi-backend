@@ -3,11 +3,13 @@
 # 后端链上 RPC 调用服务，用于验证前端提交的链上数据真实性
 # 支持 Safe 合约的 getOwners / getThreshold / getTransactionReceipt
 class ChainRpc
-  # chain_id -> RPC URL 映射
+  ALCHEMY_API_KEY = ENV.fetch("ALCHEMY_API_KEY")
+
+  # chain_id -> Alchemy RPC URL (same key as VITE_ALCHEMY_API_KEY in semi-app)
   RPC_URLS = {
-    1 => ENV.fetch("MAINNET_RPC_URL", "https://eth.llamarpc.com"),
-    10 => ENV.fetch("OP_RPC_URL", "https://mainnet.optimism.io"),
-    11155111 => ENV.fetch("SEPOLIA_RPC_URL", "https://rpc.sepolia.org")
+    1 => "https://eth-mainnet.g.alchemy.com/v2/#{ALCHEMY_API_KEY}",
+    10 => "https://opt-mainnet.g.alchemy.com/v2/#{ALCHEMY_API_KEY}",
+    11155111 => "https://eth-sepolia.g.alchemy.com/v2/#{ALCHEMY_API_KEY}"
   }.freeze
 
   # Safe 合约 v1.4.1 函数选择器
