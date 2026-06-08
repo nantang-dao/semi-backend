@@ -1,0 +1,28 @@
+app/controllers/multisig_controller.rb
+  s_d09588fa00adaf::t_c7ced1867081a6 417-420,422-427
+  s_d09588fa00adaf::t_4a960df6807653 431-436,438-442
+  s_d09588fa00adaf::t_3d6e5e38198d1d 869-870
+  s_d09588fa00adaf::t_6be46ac2e2a648 782-816
+db/migrate/20260608000001_add_executor_and_gas_to_multisig_transactions.rb
+  s_d09588fa00adaf::t_fb77542ea039d3 1-12
+db/schema.rb
+  ai_agent 13,57-59
+app/models/multisig_transaction.rb
+  s_d09588fa00adaf::t_9adc6fe427d3c4 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "16c98fca7ff85513742a0fa6d88830feb6cec921",
+  "prompts": {},
+  "sessions": {
+    "s_d09588fa00adaf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "46c3e587-d2bf-4425-b1a3-a4fd9a0bba84",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
