@@ -411,42 +411,35 @@ class MultisigController < ApplicationController
 
     raise AppError.new("Transaction is not in executing state") unless tx.status == "executing"
 
-    # 原子更新：防止并发 confirm 导致 apply_wallet_config 执行两次
+    tx_hash = params[:tx_hash].to_s
+    raise AppError.new("tx_hash is required") if tx_hash.blank?
+
+    # 失败闭合（fail-closed）链上校验：必须能从链上读到该 tx_hash 的成功回执，且该回执
+    # 确实属于本 Safe 的 ERC-4337 UserOp，才允许标记 executed 并应用 owner/threshold 配置变更。
+    # 防止伪造/复用无关 tx_hash 把交易标记为已执行。校验在状态推进之前进行，失败时交易
+    # 仍停留在 executing（可由 reset_executing_tx 或前端重试恢复），不会卡在 confirming。
+    chain_id = wallet.chain_id || wallet.chain.to_i
+    verify_userop_receipt!(tx_hash, chain_id, wallet.evm_chain_address)
+
+    # 校验通过后再原子推进状态：防止并发 confirm 导致 apply_wallet_config 执行两次
     updated = MultisigTransaction.where(id: tx.id, status: "executing").update_all(status: "confirming")
     raise AppError.new("Transaction is no longer in executing state") unless updated > 0
     tx.reload
 
-    tx_hash = params[:tx_hash].to_s
-    raise AppError.new("tx_hash is required") if tx_hash.blank?
-
-    # 后端验证 tx_hash 的真实性（可选，降级处理）
-    # ERC-4337 交易通过 Bundler 执行，前端已通过 pollForUserOpReceipt 验证成功
-    # 后端再次验证可能因 RPC 节点同步延迟而失败，因此采用可选验证策略
-    chain_id = wallet.chain_id || wallet.chain.to_i
-    begin
-      receipt = ChainRpc.get_transaction_receipt(tx_hash, chain_id)
-      if receipt
-        # 验证成功：确认链上状态
-        if receipt["status"] != "0x1"
-          raise AppError.new("Transaction failed on chain")
-        end
-        # receipt 存在且成功，继续确认
-      else
-        # receipt 暂时查不到（RPC 同步延迟），降级为信任前端
-        # 前端已通过 bundler 的 pollForUserOpReceipt 确认交易成功
-        Rails.logger.info("confirm_tx: receipt not yet available for tx_hash=#{tx_hash}, trusting frontend verification")
-      end
-    rescue AppError
-      raise
-    rescue => e
-      # RPC 异常，降级为信任前端
-      Rails.logger.warn("confirm_tx: ChainRpc error for tx_hash=#{tx_hash}: #{e.message}, trusting frontend verification")
-    end
-
     nonce = tx.nonce
 
+    # Gas is sponsored by the paymaster on-chain (free for all signers), but the
+    # actual cost (wei, from the UserOp receipt's actualGasCost) is accredited to
+    # the executor — the "last user" who triggered execution.
+    gas_used = params[:gas_used].to_s.presence
+    executor = current_user
+
     ActiveRecord::Base.transaction do
-      tx.update!(status: "executed", tx_hash: tx_hash)
+      tx.update!(status: "executed", tx_hash: tx_hash, executor_id: executor.id, gas_used: (gas_used || "0"))
+
+      if gas_used.present? && gas_used.to_d > 0
+        executor.increment!(:total_used_gas_credits, gas_used.to_d)
+      end
 
       # Advance queue based on executed tx or the tx it replaced
       advance_from = tx.queue_position
@@ -786,6 +779,41 @@ class MultisigController < ApplicationController
     }
   end
 
+  # ERC-4337 v0.7 EntryPoint（所有支持链上为同一地址）
+  ENTRY_POINT_V07 = "0x0000000071727de22e5e9d8baf0edac6f37da032"
+
+  # 失败闭合校验：链上必须存在该 tx_hash 的成功回执，且回执确实对应本 Safe 的 UserOp。
+  # 任一条件不满足即抛错（不降级信任前端），从而阻止伪造/复用无关 tx_hash 的确认。
+  def verify_userop_receipt!(tx_hash, chain_id, safe_address)
+    safe = safe_address.to_s.downcase
+
+    # 容忍 RPC 节点同步延迟：短暂重试后仍读不到则失败闭合（让前端稍后重试）。
+    receipt = nil
+    3.times do |i|
+      receipt = ChainRpc.get_transaction_receipt(tx_hash, chain_id)
+      break if receipt
+      sleep(1.5) if i < 2
+    end
+
+    raise AppError.new("链上回执暂不可用，请稍后重试确认（tx 仍可恢复）") if receipt.nil?
+    raise AppError.new("Transaction failed on chain") unless receipt["status"] == "0x1"
+
+    # 必须由 4337 EntryPoint 提交，排除任意普通成功交易的 hash
+    to_addr = receipt["to"].to_s.downcase
+    raise AppError.new("回执非 4337 EntryPoint 交易，拒绝确认") unless to_addr == ENTRY_POINT_V07
+
+    # 回执必须与本 Safe 绑定：执行过程中 Safe 会发出自身事件（log.address == safe），
+    # 或 EntryPoint 的 UserOperationEvent 以 safe 作为 sender（topic 含左补零的 safe 地址）。
+    logs = receipt["logs"] || []
+    padded_safe = "0x#{"0" * 24}#{safe.sub(/\A0x/, "")}"
+    involves_safe = logs.any? do |log|
+      addr = log["address"].to_s.downcase
+      topics = (log["topics"] || []).map { |t| t.to_s.downcase }
+      addr == safe || topics.include?(padded_safe)
+    end
+    raise AppError.new("回执未涉及本多签钱包，拒绝确认") unless involves_safe
+  end
+
   def serialize_tx(tx, include_signatures: false)
     wallet = tx.wallet
     current_owner_addresses = wallet.wallet_owners.pluck(:owner_address).map { |a| a.to_s.downcase }
@@ -838,6 +866,8 @@ class MultisigController < ApplicationController
       owner_snapshot: tx.owner_snapshot,
       memo: tx.memo,
       sender_note: tx.sender_note,
+      executor_id: tx.executor_id,
+      gas_used: tx.gas_used.to_s,
       created_at: tx.created_at,
       updated_at: tx.updated_at
     }

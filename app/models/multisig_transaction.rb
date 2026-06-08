@@ -3,6 +3,7 @@ class MultisigTransaction < ApplicationRecord
   belongs_to :proposer, class_name: "User", foreign_key: "proposer_id"
   has_many :multisig_signatures, dependent: :destroy
   belongs_to :replaced_tx, class_name: "MultisigTransaction", foreign_key: "replaces_tx_id", optional: true
+  belongs_to :executor, class_name: "User", foreign_key: "executor_id", optional: true
 
   STATUSES = %w[queued signing ready executing confirming executed failed withdrawn superseded expired].freeze
   TERMINAL_STATUSES = %w[executed failed withdrawn superseded expired].freeze
