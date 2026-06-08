@@ -5,6 +5,9 @@ require "time"
 require "openssl"
 require "net/http"
 require "uri"
+require "base64"
+require "cgi"
+require "securerandom"
 
 module SendSms
     def self.send_sms(phone, code)
@@ -84,25 +87,37 @@ module SendSms
     end
 
     def self.send_sms_aliyun(phone, code)
-        client = RPCClient.new(
-          access_key_id: ENV["ACCESS_KEY_ID"],
-          access_key_secret: ENV["ACCESS_KEY_SECRET"],
-          endpoint: "https://dysmsapi.aliyuncs.com",
-          api_version: "2017-05-25"
-        )
+      params = {
+        "Action"           => "SendSms",
+        "Version"          => "2017-05-25",
+        "Format"           => "JSON",
+        "AccessKeyId"      => ENV["ACCESS_KEY_ID"],
+        "SignatureMethod"  => "HMAC-SHA1",
+        "SignatureVersion" => "1.0",
+        "SignatureNonce"   => SecureRandom.hex(16),
+        "Timestamp"        => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "PhoneNumbers"     => phone.to_s,
+        "SignName"         => ENV["ALIYUN_SMS_SIGN_NAME"],
+        "TemplateCode"     => ENV["ALIYUN_SMS_TEMPLATE_CODE"],
+        "TemplateParam"    => JSON.generate({ "code" => code.to_s }),
+      }
 
-        response = client.request(
-          action: "SendSms",
-          params: {
-            "SignName": ENV["ALIYUN_SMS_SIGN_NAME"],
-            "TemplateCode": ENV["ALIYUN_SMS_TEMPLATE_CODE"],
-            "PhoneNumbers": "#{phone}",
-            "TemplateParam": "{\"code\":\"#{code}\"}"
-          },
-          opts: {
-            method: "POST",
-            format_params: true
-          }
-        )
+      sorted = params.sort.map { |k, v| "#{percent_encode(k)}=#{percent_encode(v)}" }.join("&")
+      string_to_sign = "POST&#{percent_encode('/')}&#{percent_encode(sorted)}"
+      params["Signature"] = Base64.strict_encode64(
+        OpenSSL::HMAC.digest("sha1", ENV["ACCESS_KEY_SECRET"] + "&", string_to_sign)
+      )
+
+      uri = URI("https://dysmsapi.aliyuncs.com/")
+      http = Net::HTTP.new(uri.host, 443)
+      http.use_ssl = true
+      req = Net::HTTP::Post.new(uri)
+      req.set_form_data(params)
+      res = http.request(req)
+      JSON.parse(res.body)
+    end
+
+    def self.percent_encode(str)
+      CGI.escape(str.to_s).gsub("+", "%20").gsub("*", "%2A").gsub("%7E", "~")
     end
 end
