@@ -1,0 +1,19 @@
+app/controllers/home_controller.rb
+  s_d09588fa00adaf::t_242f3869d977f1 99-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "91be581f29953e523d8ef6fac2465b94c848684e",
+  "prompts": {},
+  "sessions": {
+    "s_d09588fa00adaf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "46c3e587-d2bf-4425-b1a3-a4fd9a0bba84",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
