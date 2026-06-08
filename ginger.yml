@@ -1,0 +1,46 @@
+service: semi-backend
+image: ghcr.io/nantang-dao/semi-backend
+
+servers:
+  web:
+    hosts: [sg.sola.day]
+    primary: true
+
+registry:
+  server: ghcr.io
+  username: nantang-dao
+  password: KAMAL_REGISTRY_PASSWORD
+
+proxy:
+  hosts: [api.semi.im]
+  app_port: 3000
+  ssl: true
+  health_check_path: /up
+  deploy_timeout: 60
+  drain_timeout: 30
+
+ssh:
+  user: root
+
+builder:
+  arch: amd64
+  remote: ssh://ubuntu@wamo.city
+
+secrets:
+  load: [.env.production]
+  inject:
+    - KAMAL_REGISTRY_PASSWORD
+    - DATABASE_URL
+    - SECRET_KEY_BASE
+    - SMS_ENABLED
+    - ALIYUN_SMS_SIGN_NAME
+    - ALIYUN_SMS_TEMPLATE_CODE
+    - ACCESS_KEY_ID
+    - ACCESS_KEY_SECRET
+    - TENCENT_SMS_SECRET_ID
+    - TENCENT_SMS_SECRET_KEY
+    - RESEND_KEY
+    - ADMIN_KEY
+    - ALCHEMY_API_KEY
+
+retain_containers: 3
