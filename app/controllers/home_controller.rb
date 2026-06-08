@@ -96,7 +96,11 @@ class HomeController < ApplicationController
   end
 
   def get_by_handle
-    user = User.find_by(handle: params[:handle]) || User.find_by(phone: params[:handle])
+    q = params[:handle].to_s
+    user = User.find_by(handle: q) ||
+           User.find_by(phone: q) ||
+           User.where("LOWER(evm_chain_address) = ?", q.downcase).first ||
+           User.where("LOWER(evm_chain_active_key) = ?", q.downcase).first
     raise AppError.new("User Not Found") unless user
     render json: user.as_json(only: [:id, :handle, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :can_send_badge])
   end
