@@ -1,0 +1,21 @@
+app/services/chain_rpc.rb
+  s_d09588fa00adaf::t_ab6d544dd2508a 6-8,10-12
+.env.example
+  s_d09588fa00adaf::t_4d8819b72f8765 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "acec330f3aecfd1d12f95daa24e636001d981e93",
+  "prompts": {},
+  "sessions": {
+    "s_d09588fa00adaf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "46c3e587-d2bf-4425-b1a3-a4fd9a0bba84",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
