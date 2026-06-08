@@ -1,0 +1,22 @@
+lib/send_sms.rb
+  s_d09588fa00adaf::t_f2ad7bb5063904 8-10
+  s_d09588fa00adaf::t_da21905578d3c7 90-103,105-121
+script/aliyun_sms.rb
+  s_d09588fa00adaf::t_1b0ee89e17a2c6 1-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "1d9b062e0b9bcdc38bd72f1c1b79480e25a3b94f",
+  "prompts": {},
+  "sessions": {
+    "s_d09588fa00adaf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "46c3e587-d2bf-4425-b1a3-a4fd9a0bba84",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
