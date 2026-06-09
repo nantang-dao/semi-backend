@@ -3,7 +3,7 @@
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'semi'
+app = 'semi-production'
 primary_region = 'sin'
 console_command = '/rails/bin/rails console'
 
