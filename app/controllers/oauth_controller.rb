@@ -1,7 +1,7 @@
 class OauthController < ApplicationController
   # GET /.well-known/openid-configuration
   def openid_configuration
-    base = ENV.fetch("APP_BASE_URL", "https://semi.fly.dev")
+    base = ENV.fetch("APP_BASE_URL", "https://api.semi.im")
     render json: {
       issuer: base,
       authorization_endpoint: "#{base}/oauth/authorize",
