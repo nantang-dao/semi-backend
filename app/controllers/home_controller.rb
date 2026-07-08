@@ -80,9 +80,31 @@ class HomeController < ApplicationController
     user = User.find_by(id: params[:id])
     raise AppError.new("User Not Found") unless user
     raise AppError.new("Invalid Auth Token") unless user == current_user
-    raise AppError.new("handle can not be numeric") if params[:handle].match?(/\A\d+\z/)
 
-    user.update(handle: params[:handle])
+    handle = params[:handle].to_s
+    validate_handle_format!(handle)
+
+    if user.handle.blank?
+      assert_handle_available!(handle)
+      user.update!(handle: handle)
+    else
+      raise AppError.new("handle unchanged") if user.handle == handle
+      unless user.can_rename?
+        next_at = user.next_rename_at.utc.strftime("%Y-%m-%d %H:%M UTC")
+        raise AppError.new("Cannot rename handle within 30 days. Next available at: #{next_at}")
+      end
+
+      assert_handle_available!(handle, exclude_user_id: user.id)
+      old_handle = user.handle
+
+      User.transaction do
+        user.handle_aliases.active.find_by(alias: handle)&.destroy!
+        HandleAlias.where(alias: old_handle).where("expires_at <= ?", Time.current).delete_all
+        user.handle_aliases.create!(alias: old_handle, expires_at: Time.current + User::ALIAS_RETENTION)
+        user.update!(handle: handle, handle_changed_at: Time.current)
+      end
+    end
+
     render json: { result: "ok" }
   end
 
@@ -96,13 +118,26 @@ class HomeController < ApplicationController
   end
 
   def get_by_handle
-    q = params[:handle].to_s
-    user = User.find_by(handle: q) ||
-           User.find_by(phone: q) ||
-           User.where("LOWER(evm_chain_address) = ?", q.downcase).first ||
-           User.where("LOWER(evm_chain_active_key) = ?", q.downcase).first
+    query = params[:handle].to_s
+    renamed_from = nil
+
+    user = User.find_by(handle: query)
+    unless user
+      alias_record = HandleAlias.active.find_by(alias: query)
+      if alias_record
+        user = alias_record.user
+        renamed_from = query
+      else
+        user = User.find_by(phone: query) ||
+               User.where("LOWER(evm_chain_address) = ?", query.downcase).first ||
+               User.where("LOWER(evm_chain_active_key) = ?", query.downcase).first
+      end
+    end
     raise AppError.new("User Not Found") unless user
-    render json: user.as_json(only: [:id, :handle, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :can_send_badge])
+
+    json = user.as_json(only: [:id, :handle, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :can_send_badge])
+    json["renamed_from"] = renamed_from if renamed_from
+    render json: json
   end
 
   def get_user
@@ -116,7 +151,9 @@ class HomeController < ApplicationController
     user = current_user
     raise AppError.new("User Not Found") unless user
 
-    render json: user.as_json(only: [:id, :handle, :email, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :remaining_gas_credits, :total_used_gas_credits, :encrypted_keys, :can_send_badge])
+    json = user.as_json(only: [:id, :handle, :email, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :remaining_gas_credits, :total_used_gas_credits, :encrypted_keys, :can_send_badge, :handle_changed_at])
+    json["next_rename_at"] = user.next_rename_at&.iso8601
+    render json: json
   end
 
   def remaining_free_transactions
@@ -254,5 +291,26 @@ class HomeController < ApplicationController
     user = User.find_by(id: params[:id])
     raise AppError.new("User Not Found") unless user
     render json: { result: "ok", contacts: user.contact_list }
+  end
+
+  private
+
+  def validate_handle_format!(handle)
+    raise AppError.new("handle can not be empty") if handle.blank?
+    raise AppError.new("handle must be at least 6 characters") if handle.length < 6
+    raise AppError.new("handle cannot exceed 30 characters") if handle.length > 30
+    raise AppError.new("handle can only contain letters, numbers, underscores and hyphens") unless handle.match?(/\A[a-zA-Z0-9_-]+\z/)
+    raise AppError.new("handle can not be numeric") if handle.match?(/\A\d+\z/)
+  end
+
+  def assert_handle_available!(handle, exclude_user_id: nil)
+    existing = User.find_by(handle: handle)
+    raise AppError.new("handle already exists") if existing && existing.id != exclude_user_id
+
+    alias_record = HandleAlias.active.find_by(alias: handle)
+    return unless alias_record
+    return if exclude_user_id && alias_record.user_id == exclude_user_id
+
+    raise AppError.new("handle temporarily unavailable")
   end
 end

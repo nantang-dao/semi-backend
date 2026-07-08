@@ -10,9 +10,21 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_06_08_000001) do
+ActiveRecord::Schema[8.0].define(version: 2026_07_04_000001) do
+  create_schema "auth"
+  create_schema "extensions"
+  create_schema "graphql"
+  create_schema "graphql_public"
+  create_schema "pgbouncer"
+  create_schema "realtime"
+  create_schema "storage"
+  create_schema "vault"
   # These are extensions that must be enabled in order to support this database
+  enable_extension "extensions.pg_stat_statements"
+  enable_extension "extensions.pgcrypto"
+  enable_extension "extensions.uuid-ossp"
   enable_extension "pg_catalog.plpgsql"
+  enable_extension "vault.supabase_vault"
 
   create_table "auth_tokens", force: :cascade do |t|
     t.string "token", null: false
@@ -60,6 +72,14 @@ ActiveRecord::Schema[8.0].define(version: 2026_06_08_000001) do
     t.index ["wallet_id", "queue_position"], name: "index_multisig_transactions_on_wallet_id_and_queue_position"
     t.index ["wallet_id", "status"], name: "index_multisig_transactions_on_wallet_id_and_status"
     t.index ["wallet_id"], name: "index_multisig_transactions_on_wallet_id"
+  create_table "handle_aliases", force: :cascade do |t|
+    t.string "user_id", null: false
+    t.string "alias", null: false
+    t.datetime "expires_at", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["alias"], name: "index_handle_aliases_on_alias", unique: true
+    t.index ["user_id"], name: "index_handle_aliases_on_user_id"
   end
 
   create_table "oauth_access_tokens", force: :cascade do |t|
@@ -184,6 +204,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_06_08_000001) do
     t.integer "transaction_count", default: 0, null: false
     t.boolean "can_send_badge", default: false
     t.jsonb "contact_list"
+    t.datetime "handle_changed_at"
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["handle"], name: "index_users_on_handle", unique: true
     t.index ["phone"], name: "index_users_on_phone", unique: true
@@ -226,6 +247,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_06_08_000001) do
   end
 
   add_foreign_key "auth_tokens", "users"
+  add_foreign_key "handle_aliases", "users"
   add_foreign_key "oauth_access_tokens", "oauth_applications", column: "application_id"
   add_foreign_key "oauth_access_tokens", "users"
   add_foreign_key "oauth_applications", "users", column: "owner_id"
