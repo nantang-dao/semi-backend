@@ -70,6 +70,93 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert JSON.parse(@response.body).key?("id")
     assert JSON.parse(@response.body).key?("handle")
+    assert_nil JSON.parse(@response.body)["renamed_from"]
+  end
+
+  test "first set handle has no cooldown" do
+    user = User.create(phone: "1111111111")
+    post set_handle_url, params: { id: user.id, handle: "firstnm" }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    assert_response :success
+    user.reload
+    assert_nil user.handle_changed_at
+    assert_equal 0, user.handle_aliases.count
+  end
+
+  test "rename creates alias and sets cooldown" do
+    user = User.create(phone: "1222222222", handle: "oldname1")
+    token = user.gen_auth_token
+
+    post set_handle_url, params: { id: user.id, handle: "newname1" }, headers: { "Authorization" => "Bearer #{token}" }
+    assert_response :success
+
+    user.reload
+    assert_equal "newname1", user.handle
+    assert user.handle_changed_at.present?
+    assert_equal 1, user.handle_aliases.count
+    assert_equal "oldname1", user.handle_aliases.first.alias
+
+    get get_by_handle_url, params: { handle: "oldname1" }
+    body = JSON.parse(@response.body)
+    assert_equal "newname1", body["handle"]
+    assert_equal "oldname1", body["renamed_from"]
+
+    get get_by_handle_url, params: { handle: "newname1" }
+    body = JSON.parse(@response.body)
+    assert_nil body["renamed_from"]
+  end
+
+  test "rename rejected within cooldown" do
+    user = User.create(phone: "1333333333", handle: "coolnm1", handle_changed_at: 1.day.ago)
+    post set_handle_url, params: { id: user.id, handle: "coolnm2" }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    assert_response :bad_request
+    assert_match(/Cannot rename handle within 30 days/, JSON.parse(@response.body)["message"])
+  end
+
+  test "rename rejected when unchanged" do
+    user = User.create(phone: "1444444444", handle: "samehdl")
+    post set_handle_url, params: { id: user.id, handle: "samehdl" }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    assert_response :bad_request
+    assert_equal "handle unchanged", JSON.parse(@response.body)["message"]
+  end
+
+  test "reserved alias blocks others" do
+    owner = User.create(phone: "1555555555", handle: "takenow", handle_changed_at: 31.days.ago)
+    owner.handle_aliases.create!(alias: "reserved1", expires_at: 30.days.from_now)
+    other = User.create(phone: "1666666666", handle: "othernm", handle_changed_at: 31.days.ago)
+
+    post set_handle_url, params: { id: other.id, handle: "reserved1" }, headers: { "Authorization" => "Bearer #{other.gen_auth_token}" }
+    assert_response :bad_request
+    assert_equal "handle temporarily unavailable", JSON.parse(@response.body)["message"]
+  end
+
+  test "user can reclaim own alias" do
+    user = User.create(phone: "1777777777", handle: "currnm1", handle_changed_at: 31.days.ago)
+    user.handle_aliases.create!(alias: "oldnm01", expires_at: 30.days.from_now)
+
+    post set_handle_url, params: { id: user.id, handle: "oldnm01" }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    assert_response :success
+
+    user.reload
+    assert_equal "oldnm01", user.handle
+    assert_nil user.handle_aliases.find_by(alias: "oldnm01")
+    assert user.handle_aliases.find_by(alias: "currnm1")
+  end
+
+  test "get_me returns rename fields" do
+    user = User.create(phone: "1888888888", handle: "mehdl01", handle_changed_at: 5.days.ago)
+    get get_me_url, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    body = JSON.parse(@response.body)
+    assert body["handle_changed_at"].present?
+    assert body["next_rename_at"].present?
+  end
+
+  test "expired alias does not block rename" do
+    user = User.create!(phone: "1999999999", handle: "curhdl1", handle_changed_at: 31.days.ago)
+    HandleAlias.create!(user: user, alias: "oldexp1", expires_at: 1.day.ago)
+
+    post set_handle_url, params: { id: user.id, handle: "newexp1" }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    assert_response :success
+    assert user.reload.handle_aliases.active.exists?(alias: "curhdl1")
   end
 
   test "should set image url" do
