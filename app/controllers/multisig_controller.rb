@@ -811,7 +811,7 @@ class MultisigController < ApplicationController
       topics = (log["topics"] || []).map { |t| t.to_s.downcase }
       addr == safe || topics.include?(padded_safe)
     end
-    raise AppError.new("回执未涉及本多签钱包，拒绝确认") unless involves_safe
+    raise AppError.new("回执未涉及本多签数字身份，拒绝确认") unless involves_safe
   end
 
   def serialize_tx(tx, include_signatures: false)
