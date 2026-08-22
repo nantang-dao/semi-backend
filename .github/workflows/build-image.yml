@@ -1,0 +1,66 @@
+# 打 git tag 时构建 docker image 并 push 到自建 registry（yatch）。
+# 部署仍然在本地手动触发：ginger deploy -P --tag <short-sha>
+# homepod 上的 Nomad 不对公网开放，runner 够不着，所以 CI 只管出镜像。
+name: build image
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "push 到 registry（关掉就只验证构建）"
+        type: boolean
+        default: true
+
+env:
+  IMAGE: registry.sola.day/sola/semi-backend
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ginger 用 git short sha 作为镜像 tag，这里必须对齐，
+      # 否则本地 `ginger deploy -P --tag` 找不到镜像。
+      - id: meta
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      # 只有 workflow_dispatch 能把 push 关掉；tag 触发一律推。
+      # 不要写成 `inputs.push != false` —— tag 触发时 inputs 是 null，
+      # 而 GitHub 表达式把 null 和 false 都转成 0，条件会变成 false，
+      # push 被静默跳过，CI 却仍然报绿。
+      - run: echo "PUSH=${{ github.event_name != 'workflow_dispatch' || inputs.push }}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: env.PUSH == 'true'
+        with:
+          registry: registry.sola.day
+          username: semi-backend-ci
+          password: ${{ secrets.YATCH_CI_TOKEN }}
+
+      # Rails 是 API-only，没有 assets:precompile，构建期不需要任何密钥
+      # （SECRET_KEY_BASE / DATABASE_URL 都是 ginger 在运行时注入的）。
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ env.PUSH == 'true' }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.sha }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: ${{ env.PUSH == 'true' && format('type=registry,ref={0}:buildcache,mode=max', env.IMAGE) || '' }}
+
+      # CI 报绿但镜像没进 registry 是最难查的失败方式。部署前先确认能拉到。
+      - name: verify image exists
+        if: env.PUSH == 'true'
+        run: |
+          docker buildx imagetools inspect \
+            "$IMAGE:${{ steps.meta.outputs.sha }}" > /dev/null
+
+      - name: summary
+        run: |
+          echo "镜像 tag: \`${{ steps.meta.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo '部署：`cd semi-backend && ginger deploy -P --tag ${{ steps.meta.outputs.sha }}`' >> "$GITHUB_STEP_SUMMARY"
