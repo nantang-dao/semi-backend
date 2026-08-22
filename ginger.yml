@@ -1,35 +1,41 @@
+# semi-backend —— 2026-08-02 从 sg.sola.day 迁到 homepod。
+# 镜像仓库从 ghcr.io 换成自建的 yatch（registry.sola.day）。
+
 service: semi-backend
-image: ghcr.io/nantang-dao/semi-backend
+image: registry.sola.day/sola/semi-backend
+
+runner: nomad
+egress: traefik
 
 servers:
   web:
-    hosts: [sg.sola.day]
+    hosts: [homepod.sola.day]
     primary: true
 
+# 自建 registry（yatch）。2026-08-02 起不再经 ghcr。
 registry:
-  server: ghcr.io
-  username: nantang-dao
-  password: KAMAL_REGISTRY_PASSWORD
+  server: registry.sola.day
+  username: sola
+  password: YATCH_TOKEN
 
 proxy:
   hosts: [api.semi.im]
   app_port: 3000
   ssl: true
   health_check_path: /up
-  deploy_timeout: 60
-  drain_timeout: 30
+  deploy_timeout: 90
 
 ssh:
-  user: root
+  user: ubuntu                # homepod 上 ubuntu 在 docker 组，且能直接调 Nomad
 
 builder:
   arch: amd64
-  remote: ssh://ubuntu@wamo.city
+  remote: ssh://ubuntu@homepod
 
 secrets:
   load: [.env.production]
   inject:
-    - KAMAL_REGISTRY_PASSWORD
+    - YATCH_TOKEN
     - DATABASE_URL
     - SECRET_KEY_BASE
     - SMS_ENABLED
