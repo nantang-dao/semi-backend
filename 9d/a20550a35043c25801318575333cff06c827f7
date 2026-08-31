@@ -1,0 +1,28 @@
+app/controllers/multisig_controller.rb
+  s_881e33c21d9e1f::t_631197c370231e 821-825
+  s_881e33c21d9e1f::t_ad6483471ec931 404,422,787,799-802,811-813,820,826
+  s_881e33c21d9e1f::t_568326244cb0bd 829
+app/services/user_op_receipt.rb
+  s_881e33c21d9e1f::t_631197c370231e 1-54
+test/services/user_op_receipt_test.rb
+  s_881e33c21d9e1f::t_e24b4a4cd7602d 1-13,15-20,22-27,29-34,36-39,41-47,49-50,52-56,58-63,65-68,71-72
+  s_881e33c21d9e1f::t_c7316d7f197ec8 14,21,28,35,40,48,51,57,64,69-70
+db/schema.rb
+  s_881e33c21d9e1f::t_86be5e008f0ed9 75-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "9da20550a35043c25801318575333cff06c827f7",
+  "prompts": {},
+  "sessions": {
+    "s_881e33c21d9e1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b1bc779-1fb3-4580-99fd-314f41d743c0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
