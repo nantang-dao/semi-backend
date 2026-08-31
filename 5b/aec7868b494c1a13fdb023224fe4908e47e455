@@ -1,0 +1,40 @@
+db/migrate/20260831000001_add_expiry_to_auth_tokens.rb
+  s_881e33c21d9e1f::t_44acd6f3428a67 4,22
+  s_881e33c21d9e1f::t_93a7cda0ff754a 1-3,5-21,23-25
+app/models/auth_token.rb
+  s_881e33c21d9e1f::t_40a77724a9afe0 5-39,47-51
+test/controllers/home_controller_test.rb
+  s_881e33c21d9e1f::t_ca318ac74e2187 7,376,394
+  s_881e33c21d9e1f::t_039985383e2a68 407-468
+test/models/auth_token_test.rb
+  s_881e33c21d9e1f::t_e018bf6c899854 1-84
+app/controllers/home_controller.rb
+  s_881e33c21d9e1f::t_40a77724a9afe0 159-181
+config/routes.rb
+  s_881e33c21d9e1f::t_40a77724a9afe0 19-20
+config/application.rb
+  s_881e33c21d9e1f::t_ca318ac74e2187 45,50-51
+  s_881e33c21d9e1f::t_1517a0cbf82783 21-30
+app/models/user.rb
+  s_881e33c21d9e1f::t_40a77724a9afe0 21-29
+app/controllers/application_controller.rb
+  s_881e33c21d9e1f::t_40a77724a9afe0 15-31,35
+db/schema.rb
+  s_881e33c21d9e1f::t_903721c6beb395 13,23-25,30-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "5baec7868b494c1a13fdb023224fe4908e47e455",
+  "prompts": {},
+  "sessions": {
+    "s_881e33c21d9e1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b1bc779-1fb3-4580-99fd-314f41d743c0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
