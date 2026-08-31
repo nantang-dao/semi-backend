@@ -20,7 +20,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_31_000001) do
     t.boolean "disabled", default: false, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.datetime "expires_at", null: false
+    t.datetime "expires_at", default: -> { "(now() + 'P1Y'::interval)" }, null: false
     t.datetime "last_used_at"
     t.index ["token", "disabled", "expires_at"], name: "index_auth_tokens_on_lookup"
     t.index ["token"], name: "index_auth_tokens_on_token", unique: true

@@ -81,4 +81,19 @@ class AuthTokenTest < ActiveSupport::TestCase
     assert stale.reload.disabled?, "过期的应被标记"
     assert_not other_device.reload.disabled?, "其他设备还活着的 token 不能动"
   end
+  # 滚动部署时新旧容器会同时在跑：migration 由新容器启动时执行，而旧容器的
+  # AuthToken 不知道 expires_at 的存在，插入时不带这一列。没有数据库默认值的话
+  # NOT NULL 会让旧容器上的每一次登录直接 500，直到它被换掉。
+  test "不带 expires_at 的插入由数据库默认值兜住" do
+    conn = ActiveRecord::Base.connection
+    conn.execute(
+      "INSERT INTO auth_tokens (token, user_id, disabled, created_at, updated_at) " \
+      "VALUES (#{conn.quote('legacy-insert')}, #{conn.quote(@user.id)}, false, now(), now())"
+    )
+
+    token = AuthToken.find_by(token: "legacy-insert")
+    assert token.expires_at.present?, "数据库默认值没生效，滚动部署会打断登录"
+    assert token.usable?
+    assert_in_delta 1.year.from_now.to_i, token.expires_at.to_i, 120
+  end
 end

@@ -29,13 +29,16 @@ class UserOpReceipt
       topics[0] == EVENT_TOPIC && topics[2] == padded_sender
     end
 
+    # 先判「这份回执里根本没有本 Safe 的 UserOp」，再按 hash 筛。反过来写的话，
+    # 带 hash 的调用碰到「一条事件都没有」会报成「找不到该 UserOp」——两种情况的
+    # 排查方向完全不同（前者多半是回执认错了，后者是提案对不上）。
+    raise NotFound, "回执中没有本数字身份的 UserOperationEvent" if events.empty?
+
     if user_op_hash.present?
       wanted = user_op_hash.to_s.downcase
       events = events.select { |log| log["topics"][1].to_s.downcase == wanted }
       raise NotFound, "回执中找不到该 UserOp" if events.empty?
     end
-
-    raise NotFound, "回执中没有本数字身份的 UserOperationEvent" if events.empty?
 
     # 没给 user_op_hash 时可能匹配到同一 Safe 的多笔，要求每一笔都成功
     events.each do |log|

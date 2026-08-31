@@ -1,6 +1,13 @@
 class AddExpiryToAuthTokens < ActiveRecord::Migration[8.0]
   def up
-    add_column :auth_tokens, :expires_at, :datetime
+    # 数据库级默认值不是给应用代码用的（AuthToken 会自己填），是为了**滚动部署**。
+    #
+    # 部署时新旧容器会同时在跑一小段时间。这个 migration 由新容器启动时的
+    # db:prepare 执行，而此刻旧容器仍在服务 —— 它的 AuthToken 不知道
+    # expires_at 的存在，插入时不带这一列。没有默认值的话，NOT NULL 会让
+    # 旧容器上的每一次登录直接 500，直到它被换掉。
+    add_column :auth_tokens, :expires_at, :datetime,
+               default: -> { "now() + interval '1 year'" }
     add_column :auth_tokens, :last_used_at, :datetime
 
     # 已签发的 token 按「签发那天起一年」补齐，而不是「从现在起一年」——
