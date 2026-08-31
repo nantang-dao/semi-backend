@@ -1,0 +1,21 @@
+app/controllers/badges_controller.rb
+  s_881e33c21d9e1f::t_a6f5bbdde10bfc 35-37,39-40
+test/controllers/badges_controller_test.rb
+  s_881e33c21d9e1f::t_5edbd4ec1b224f 227-242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "61eb67fc5951afdc5e89ba7e9c6de4110aeebc02",
+  "prompts": {},
+  "sessions": {
+    "s_881e33c21d9e1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b1bc779-1fb3-4580-99fd-314f41d743c0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
