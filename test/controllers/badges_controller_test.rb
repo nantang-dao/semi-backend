@@ -155,7 +155,7 @@ class BadgesControllerTest < ActionDispatch::IntegrationTest
   test "不是持有人不能 accept" do
     badge = make_badge
     post "/badge/accept",
-         params: { badge_id: badge.badge_id, wallet_address: CONTRACT, chain_id: 10 },
+         params: { badge_id: badge.badge_id, wallet_address: CONTRACT, chain_id: 10, tx_hash: "0x1" },
          headers: @headers
     assert_response :bad_request
     assert_equal "Badge Is Not Owned By The User", body["message"]
@@ -187,7 +187,7 @@ class BadgesControllerTest < ActionDispatch::IntegrationTest
   test "跨链 accept 被拒绝" do
     badge = make_badge(chain_id: 10)
     post "/badge/accept",
-         params: { badge_id: badge.badge_id, wallet_address: OWNER, chain_id: 11155111 },
+         params: { badge_id: badge.badge_id, wallet_address: OWNER, chain_id: 11155111, tx_hash: "0x1" },
          headers: @headers
     assert_response :bad_request
     assert_equal "Badge Is Not On This Chain", body["message"]
@@ -195,7 +195,7 @@ class BadgesControllerTest < ActionDispatch::IntegrationTest
 
   test "reject 之后不能再 accept" do
     badge = make_badge
-    params = { badge_id: badge.badge_id, wallet_address: OWNER, chain_id: 10 }
+    params = { badge_id: badge.badge_id, wallet_address: OWNER, chain_id: 10, tx_hash: "0x1" }
 
     post "/badge/reject", params: params, headers: @headers
     assert_response :success
@@ -203,6 +203,46 @@ class BadgesControllerTest < ActionDispatch::IntegrationTest
 
     post "/badge/accept", params: params, headers: @headers
     assert_response :bad_request
+  end
+
+  # ---------- code review 发现的问题，各钉一条 ----------
+
+  test "C：重复发放不会把已 accepted 的徽章打回 pending" do
+    badge = Badge.create!(
+      badge_id: node("dup"), class_id: node("c"), wallet_address: OWNER,
+      chain_id: 10, status: "accepted", tx_hash: "0xmint", metadata: {}
+    )
+
+    post "/badge/items",
+         params: { chain_id: 10, badges: [ { badge_id: node("dup"), class_id: node("c"),
+                                             wallet_address: OWNER, metadata: {} } ] },
+         headers: @headers
+    assert_response :success
+
+    badge.reload
+    assert_equal "accepted", badge.status, "发放接口不该改动已有徽章的状态"
+    assert_equal "0xmint", badge.tx_hash
+    assert_equal 1, Badge.count
+  end
+
+  test "D：accept 必须带 tx_hash" do
+    badge = make_badge
+    post "/badge/accept",
+         params: { badge_id: badge.badge_id, wallet_address: OWNER, chain_id: 10 },
+         headers: @headers
+    assert_response :bad_request
+    assert_equal "Missing tx_hash", body["message"]
+    assert_equal "pending", badge.reload.status
+  end
+
+  test "D：补记录时可以不带 tx_hash，但要显式声明 recovered" do
+    badge = make_badge
+    post "/badge/accept",
+         params: { badge_id: badge.badge_id, wallet_address: OWNER, chain_id: 10, recovered: true },
+         headers: @headers
+    assert_response :success
+    assert_equal "accepted", badge.reload.status
+    assert_nil badge.tx_hash
   end
 
   # ---------- summary / details ----------

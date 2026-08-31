@@ -98,8 +98,14 @@ class BadgesController < ApplicationController
 
     created = ActiveRecord::Base.transaction do
       items.map do |item|
-        badge = Badge.find_or_initialize_by(badge_id: fetch_node(item, :badge_id))
-        badge.assign_attributes(
+        badge_id = fetch_node(item, :badge_id)
+        # 只新建，不更新。之前用 find_or_initialize_by 会把一枚已经 accepted、
+        # 已经 mint 过的徽章重置回 pending —— 发放接口不该有这种状态机转移。
+        existing = Badge.find_by(badge_id: badge_id)
+        next existing if existing
+
+        badge = Badge.new(
+          badge_id: badge_id,
           class_id: fetch_node(item, :class_id),
           wallet_address: fetch_address(item, :wallet_address),
           chain_id: chain_id,
@@ -116,10 +122,19 @@ class BadgesController < ApplicationController
 
   def accept
     badge = claim_pending_badge!
+
+    # accepted 必须能指向一笔链上交易。唯一的例外是补记录：上一次 mint 成功了
+    # 但没写进库，调用方查过链上确认 token 已存在，这时没有 tx_hash 可给。
+    recovered = ActiveModel::Type::Boolean.new.cast(params[:recovered])
+    tx_hash = params[:tx_hash].presence
+    raise AppError.new("Missing tx_hash") if tx_hash.nil? && !recovered
+
+    Rails.logger.warn("Badge #{badge.badge_id} accepted without tx_hash (recovery)") if recovered
+
     # 条件更新而不是先读后写：两个请求同时进来时，只有一个能把 pending 抢走，
     # 另一个拿到 0 行，不会重复 mint。
     updated = Badge.where(id: badge.id, status: "pending")
-                   .update_all(status: "accepted", tx_hash: params[:tx_hash], updated_at: Time.current)
+                   .update_all(status: "accepted", tx_hash: tx_hash, updated_at: Time.current)
     raise AppError.new("Badge Is Not Pending") if updated.zero?
 
     render json: { result: "ok", badge: serialize_badge(badge.reload) }
