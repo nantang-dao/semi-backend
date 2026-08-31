@@ -13,6 +13,7 @@ Rails.application.routes.draw do
   post "signin_with_password" => "home#signin_with_password"
   post "set_handle" => "home#set_handle"
   post "set_image_url" => "home#set_image_url"
+  post "upload_image" => "home#upload_image"
   get  "get_by_handle" => "home#get_by_handle"
   get  "get_user" => "home#get_user"
   get  "get_me" => "home#get_me"

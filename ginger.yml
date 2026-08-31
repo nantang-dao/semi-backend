@@ -48,5 +48,6 @@ secrets:
     - RESEND_KEY
     - ADMIN_KEY
     - ALCHEMY_API_KEY
+    - SOLA_AUTH_TOKEN
 
 retain_containers: 3

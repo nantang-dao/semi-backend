@@ -117,6 +117,34 @@ class HomeController < ApplicationController
     render json: { result: "ok" }
   end
 
+  # 图片上传：前端把文件交给这里，凭证留在服务端，由 ImageUploader 转发到图床。
+  def upload_image
+    authenticate_user
+
+    file = params[:file]
+    raise AppError.new("No File Uploaded") unless file.respond_to?(:tempfile)
+
+    content_type = file.content_type.to_s.split(";").first
+    unless ImageUploader::ALLOWED_TYPES.include?(content_type)
+      raise AppError.new("Unsupported Image Type")
+    end
+
+    raise AppError.new("Image Too Large") if file.tempfile.size > ImageUploader::MAX_BYTES
+
+    begin
+      url = ImageUploader.upload(
+        io: file.tempfile,
+        filename: file.original_filename.presence || "upload",
+        content_type: content_type
+      )
+    rescue ImageUploader::UploadError => e
+      Rails.logger.error("Image upload failed: #{e.message}")
+      raise AppError.new("Image Upload Failed")
+    end
+
+    render json: { result: "ok", url: url }
+  end
+
   def get_by_handle
     query = params[:handle].to_s
     renamed_from = nil
