@@ -51,6 +51,23 @@ Rails.application.routes.draw do
   post "withdraw_multisig_tx"         => "multisig#withdraw_tx"
   get  "lookup_multisig_tx_memos"    => "multisig#lookup_tx_memos"
 
+  # Badges —— 调用方只有 semi-app 的 Nitro 层，用 X-Service-Token 认证。
+  # 链上写入留在 Nitro（后端不签名），这里只有数据。
+  scope "/badge" do
+    get  "profile"         => "badges#show_profile"
+    post "profile"         => "badges#create_profile"
+    get  "classes"         => "badges#list_classes"
+    get  "classes/details" => "badges#class_details"
+    post "classes"         => "badges#create_class"
+    get  "owned"           => "badges#owned"
+    get  "pending"         => "badges#pending"
+    get  "summary"         => "badges#summary"
+    get  "item"            => "badges#show_badge"
+    post "items"           => "badges#create_badges"
+    post "accept"          => "badges#accept"
+    post "reject"          => "badges#reject"
+  end
+
   # OIDC Discovery
   get ".well-known/openid-configuration" => "oauth#openid_configuration"
 

@@ -49,5 +49,6 @@ secrets:
     - ADMIN_KEY
     - ALCHEMY_API_KEY
     - SOLA_AUTH_TOKEN
+    - BADGE_SERVICE_TOKEN
 
 retain_containers: 3
