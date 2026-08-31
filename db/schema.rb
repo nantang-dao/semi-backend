@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_08_31_000001) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_01_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -25,6 +25,57 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_31_000001) do
     t.index ["token", "disabled", "expires_at"], name: "index_auth_tokens_on_lookup"
     t.index ["token"], name: "index_auth_tokens_on_token", unique: true
     t.index ["user_id"], name: "index_auth_tokens_on_user_id"
+  end
+
+  create_table "badge_classes", id: :string, force: :cascade do |t|
+    t.string "class_id", null: false
+    t.integer "chain_id", null: false
+    t.string "profile_id", null: false
+    t.string "wallet_address", null: false
+    t.string "badge_contract_address", null: false
+    t.jsonb "metadata", default: {}, null: false
+    t.string "tx_hash"
+    t.string "instant_id"
+    t.virtual "wallet_address_lower", type: :string, as: "lower((wallet_address)::text)", stored: true
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["class_id"], name: "index_badge_classes_on_class_id", unique: true
+    t.index ["instant_id"], name: "index_badge_classes_on_instant_id", unique: true, where: "(instant_id IS NOT NULL)"
+    t.index ["profile_id", "chain_id"], name: "index_badge_classes_on_profile_id_and_chain_id"
+    t.index ["wallet_address_lower", "chain_id"], name: "index_badge_classes_on_wallet_address_lower_and_chain_id"
+  end
+
+  create_table "badge_profiles", id: :string, force: :cascade do |t|
+    t.string "profile_id", null: false
+    t.string "wallet_address", null: false
+    t.integer "chain_id", null: false
+    t.string "tx_hash"
+    t.string "instant_id"
+    t.virtual "wallet_address_lower", type: :string, as: "lower((wallet_address)::text)", stored: true
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["instant_id"], name: "index_badge_profiles_on_instant_id", unique: true, where: "(instant_id IS NOT NULL)"
+    t.index ["profile_id"], name: "index_badge_profiles_on_profile_id", unique: true
+    t.index ["wallet_address_lower", "chain_id"], name: "index_badge_profiles_on_wallet_address_lower_and_chain_id"
+  end
+
+  create_table "badges", id: :string, force: :cascade do |t|
+    t.string "badge_id", null: false
+    t.string "class_id", null: false
+    t.string "wallet_address", null: false
+    t.jsonb "metadata", default: {}, null: false
+    t.integer "chain_id", null: false
+    t.string "tx_hash"
+    t.string "status", default: "pending", null: false
+    t.string "instant_id"
+    t.virtual "wallet_address_lower", type: :string, as: "lower((wallet_address)::text)", stored: true
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["badge_id"], name: "index_badges_on_badge_id", unique: true
+    t.index ["class_id", "chain_id"], name: "index_badges_on_class_id_and_chain_id"
+    t.index ["instant_id"], name: "index_badges_on_instant_id", unique: true, where: "(instant_id IS NOT NULL)"
+    t.index ["wallet_address_lower", "chain_id", "status"], name: "index_badges_on_wallet_address_lower_and_chain_id_and_status"
+    t.check_constraint "status::text = ANY (ARRAY['pending'::character varying, 'accepted'::character varying, 'rejected'::character varying]::text[])", name: "badges_status_check"
   end
 
   create_table "handle_aliases", force: :cascade do |t|
