@@ -16,6 +16,8 @@ Rails.application.routes.draw do
   get  "get_by_handle" => "home#get_by_handle"
   get  "get_user" => "home#get_user"
   get  "get_me" => "home#get_me"
+  post "logout" => "home#logout"
+  post "logout_all" => "home#logout_all"
   get  "remaining_free_transactions" => "home#remaining_free_transactions"
   get  "get_encrypted_keys" => "home#get_encrypted_keys"
   post "set_encrypted_keys" => "home#set_encrypted_keys"

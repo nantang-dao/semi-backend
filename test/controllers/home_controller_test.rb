@@ -4,7 +4,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
   test "should get index" do
     get root_url
     assert_response :success
-    assert_equal({"message" => "Hello, World!"}, JSON.parse(@response.body))
+    assert_equal({ "message" => "Hello, World!" }, JSON.parse(@response.body))
   end
 
   test "should send sms" do
@@ -373,7 +373,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
 
   test "should set and get contacts" do
     user = User.create(phone: "1234567890")
-    contact_list = [{ "name" => "Alice", "phone" => "9876543210" }, { "name" => "Bob", "phone" => "5555555555" }]
+    contact_list = [ { "name" => "Alice", "phone" => "9876543210" }, { "name" => "Bob", "phone" => "5555555555" } ]
 
     post set_contacts_url, params: { id: user.id, contact_list: contact_list }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
     assert_response :success
@@ -391,7 +391,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
   test "should fail set_contacts without auth" do
     user = User.create(phone: "1234567890")
     other_user = User.create(phone: "9999999999")
-    contact_list = [{ "name" => "Alice", "phone" => "9876543210" }]
+    contact_list = [ { "name" => "Alice", "phone" => "9876543210" } ]
 
     post set_contacts_url, params: { id: user.id, contact_list: contact_list }, headers: { "Authorization" => "Bearer #{other_user.gen_auth_token}" }
     assert_response :bad_request
@@ -404,4 +404,66 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert_equal "User Not Found", JSON.parse(@response.body)["message"]
   end
 
+  # ── 登出与 token 生命周期 ────────────────────────────────────────────────
+  #
+  # 改动之前根本没有 logout 端点：前端「退出」只是删掉本地 cookie，服务端那条
+  # 记录还在、还有效。
+
+  test "logout 吊销当前 token" do
+    user = User.create(phone: "13900000002")
+    token = user.gen_auth_token
+    headers = { "Authorization" => "Bearer #{token}" }
+
+    get get_me_url, headers: headers
+    assert_response :success
+
+    post logout_url, headers: headers
+    assert_response :success
+
+    get get_me_url, headers: headers
+    assert_equal "User Not Found", JSON.parse(@response.body)["message"]
+  end
+
+  test "logout 不影响该用户的其他设备" do
+    user = User.create(phone: "13900000003")
+    phone_token = user.gen_auth_token
+    laptop_token = user.gen_auth_token
+
+    post logout_url, headers: { "Authorization" => "Bearer #{phone_token}" }
+    assert_response :success
+
+    get get_me_url, headers: { "Authorization" => "Bearer #{laptop_token}" }
+    assert_response :success
+  end
+
+  test "logout_all 吊销全部 token" do
+    user = User.create(phone: "13900000004")
+    phone_token = user.gen_auth_token
+    laptop_token = user.gen_auth_token
+
+    post logout_all_url, headers: { "Authorization" => "Bearer #{phone_token}" }
+    assert_response :success
+    assert_equal 2, JSON.parse(@response.body)["revoked"]
+
+    get get_me_url, headers: { "Authorization" => "Bearer #{laptop_token}" }
+    assert_equal "User Not Found", JSON.parse(@response.body)["message"]
+  end
+
+  test "过期的 token 认证失败" do
+    user = User.create(phone: "13900000005")
+    token = user.gen_auth_token
+    AuthToken.find_by(token: token).update_column(:expires_at, 1.minute.ago)
+
+    get get_me_url, headers: { "Authorization" => "Bearer #{token}" }
+    assert_equal "User Not Found", JSON.parse(@response.body)["message"]
+  end
+
+  test "认证成功时记录 last_used_at" do
+    user = User.create(phone: "13900000006")
+    token = user.gen_auth_token
+
+    get get_me_url, headers: { "Authorization" => "Bearer #{token}" }
+    assert_response :success
+    assert AuthToken.find_by(token: token).last_used_at.present?
+  end
 end

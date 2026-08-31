@@ -10,21 +10,9 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_07_04_000001) do
-  create_schema "auth"
-  create_schema "extensions"
-  create_schema "graphql"
-  create_schema "graphql_public"
-  create_schema "pgbouncer"
-  create_schema "realtime"
-  create_schema "storage"
-  create_schema "vault"
+ActiveRecord::Schema[8.0].define(version: 2026_08_31_000001) do
   # These are extensions that must be enabled in order to support this database
-  enable_extension "extensions.pg_stat_statements"
-  enable_extension "extensions.pgcrypto"
-  enable_extension "extensions.uuid-ossp"
   enable_extension "pg_catalog.plpgsql"
-  enable_extension "vault.supabase_vault"
 
   create_table "auth_tokens", force: :cascade do |t|
     t.string "token", null: false
@@ -32,8 +20,21 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_04_000001) do
     t.boolean "disabled", default: false, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.datetime "expires_at", null: false
+    t.datetime "last_used_at"
+    t.index ["token", "disabled", "expires_at"], name: "index_auth_tokens_on_lookup"
     t.index ["token"], name: "index_auth_tokens_on_token", unique: true
     t.index ["user_id"], name: "index_auth_tokens_on_user_id"
+  end
+
+  create_table "handle_aliases", force: :cascade do |t|
+    t.string "user_id", null: false
+    t.string "alias", null: false
+    t.datetime "expires_at", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["alias"], name: "index_handle_aliases_on_alias", unique: true
+    t.index ["user_id"], name: "index_handle_aliases_on_user_id"
   end
 
   create_table "multisig_signatures", id: false, force: :cascade do |t|
@@ -72,16 +73,6 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_04_000001) do
     t.index ["wallet_id", "queue_position"], name: "index_multisig_transactions_on_wallet_id_and_queue_position"
     t.index ["wallet_id", "status"], name: "index_multisig_transactions_on_wallet_id_and_status"
     t.index ["wallet_id"], name: "index_multisig_transactions_on_wallet_id"
-  end
-
-  create_table "handle_aliases", force: :cascade do |t|
-    t.string "user_id", null: false
-    t.string "alias", null: false
-    t.datetime "expires_at", null: false
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-    t.index ["alias"], name: "index_handle_aliases_on_alias", unique: true
-    t.index ["user_id"], name: "index_handle_aliases_on_user_id"
   end
 
   create_table "oauth_access_tokens", force: :cascade do |t|

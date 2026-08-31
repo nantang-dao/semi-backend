@@ -156,6 +156,29 @@ class HomeController < ApplicationController
     render json: json
   end
 
+  # POST /logout
+  # 吊销**当前这一个** token（不是该用户的全部 —— 别的设备不该被登出）。
+  #
+  # 在此之前登出只是前端删掉本地 cookie，服务端那条记录还在、还有效：
+  # 谁抄走过那个 token，用户点多少次「退出」都不影响他继续用。
+  def logout
+    token = current_auth_token
+    raise AuthError.new("Unauthorized") unless token
+
+    token.revoke!
+    render json: { result: "ok" }
+  end
+
+  # POST /logout_all
+  # 吊销该用户的全部 token —— 「我的账号可能被盗了」时用。
+  def logout_all
+    user = current_user
+    raise AuthError.new("Unauthorized") unless user
+
+    count = user.auth_tokens.usable.update_all(disabled: true, updated_at: Time.current)
+    render json: { result: "ok", revoked: count }
+  end
+
   def remaining_free_transactions
     user = current_user
     raise AppError.new("User Not Found") unless user
