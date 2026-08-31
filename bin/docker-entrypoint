@@ -6,9 +6,34 @@ if [ -z "${LD_PRELOAD+x}" ]; then
     export LD_PRELOAD
 fi
 
-# If running the rails server then create or migrate existing database
-if [ "${@: -2:1}" == "./bin/rails" ] && [ "${@: -1:1}" == "server" ]; then
+# 只有真正要起 web server 时才准备数据库 —— rails console、rake 任务、
+# 一次性排查命令都不该顺手迁移。
+#
+# Rails 生成的原版判断是「最后两个参数是不是 ./bin/rails server」。我们的
+# CMD 是 ./bin/thrust ./bin/rails server -b 0.0.0.0 -p 3000，最后两个参数
+# 是 -p 和 3000，所以那个判断恒为假，db:prepare 从 2026-08 迁到 homepod
+# 之后就再没跑过一次。这里改成在整个参数列表里找相邻的 rails + server。
+runs_server() {
+  local prev="" arg
+  for arg in "$@"; do
+    case "$prev" in
+      rails|bin/rails|./bin/rails|/rails/bin/rails)
+        [ "$arg" = "server" ] && return 0
+        ;;
+    esac
+    prev="$arg"
+  done
+  return 1
+}
+
+# 两条分支都留一行日志。上面那个 bug 之所以能潜伏这么久，就是因为跳过时
+# 悄无声息 —— 日志里看不出 db:prepare 到底跑没跑。
+if runs_server "$@"; then
+  echo "[entrypoint] preparing database"
   ./bin/rails db:prepare
+  echo "[entrypoint] database ready"
+else
+  echo "[entrypoint] not a server command, skipping db:prepare"
 fi
 
 exec "${@}"
