@@ -1,0 +1,25 @@
+app/services/user_op_receipt.rb
+  s_881e33c21d9e1f::t_bd50f06a12426d 32-36
+db/migrate/20260831000001_add_expiry_to_auth_tokens.rb
+  s_881e33c21d9e1f::t_9bd2281dea6bda 3-10
+test/models/auth_token_test.rb
+  s_881e33c21d9e1f::t_d929901f7c67f4 84-98
+db/schema.rb
+  s_881e33c21d9e1f::t_979fff3e6c4d8f 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "ef51a70d9cc08891d772ccf073b4f7bd392dfde7",
+  "prompts": {},
+  "sessions": {
+    "s_881e33c21d9e1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b1bc779-1fb3-4580-99fd-314f41d743c0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
