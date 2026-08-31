@@ -1,0 +1,29 @@
+test/controllers/upload_image_test.rb
+  s_881e33c21d9e1f::t_66ee53b7992f07 1-53
+.env.example
+  s_881e33c21d9e1f::t_0dba5c2b7c0a83 13
+app/controllers/home_controller.rb
+  s_881e33c21d9e1f::t_d179b9b695a0e6 120-147
+app/services/image_uploader.rb
+  s_881e33c21d9e1f::t_13dda4847015b7 1-48
+config/routes.rb
+  s_881e33c21d9e1f::t_795e238bb1d6f5 16
+ginger.yml
+  s_881e33c21d9e1f::t_0dcd9b5455d9da 51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "6bd2a5ff4b8dc1a052ccbb345f1ef5d2579961fe",
+  "prompts": {},
+  "sessions": {
+    "s_881e33c21d9e1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b1bc779-1fb3-4580-99fd-314f41d743c0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
