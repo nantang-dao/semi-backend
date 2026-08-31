@@ -224,6 +224,22 @@ class BadgesControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ klass.class_id ], body["badge_classes"].map { |c| c["class_id"] }
   end
 
+  test "classes 按 profile_id 过滤，不会带出 profile_id 对不上的脏行" do
+    mine = BadgeClass.create!(
+      class_id: node("k1"), chain_id: 10, profile_id: node("p"),
+      wallet_address: OWNER, badge_contract_address: CONTRACT, metadata: {}
+    )
+    # 同一个钱包地址，但 profile_id 是另一个值 —— 生产数据里确实有这种行
+    BadgeClass.create!(
+      class_id: node("k2"), chain_id: 10, profile_id: node("other"),
+      wallet_address: OWNER, badge_contract_address: CONTRACT, metadata: {}
+    )
+
+    get "/badge/classes", params: { chain_id: 10, profile_id: node("p") }, headers: @headers
+    assert_response :success
+    assert_equal [ mine.class_id ], body["badge_classes"].map { |c| c["class_id"] }
+  end
+
   test "找不到的 class 返回 400 而不是空对象" do
     get "/badge/classes/details", params: { class_id: node("nope"), chain_id: 10 }, headers: @headers
     assert_response :bad_request

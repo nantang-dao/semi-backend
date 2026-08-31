@@ -32,8 +32,12 @@ class BadgesController < ApplicationController
 
   # ---------- classes ----------
 
+  # 按 profile_id 而不是按地址过滤。库里存在 profile_id 指向不存在 profile 的
+  # 脏行（有一条的 profile_id 和 class_id 都是 keccak256("")），按地址查会把它
+  # 带出来。summary 一直是按 profile_id 查的，两边保持一致。
   def list_classes
-    classes = BadgeClass.for_wallet(required(:wallet_address), chain_id).order(created_at: :desc)
+    classes = BadgeClass.where(profile_id: node_param(:profile_id), chain_id: chain_id)
+                        .order(created_at: :desc)
     render json: { result: "ok", badge_classes: classes.map { |c| serialize_class(c) } }
   end
 
