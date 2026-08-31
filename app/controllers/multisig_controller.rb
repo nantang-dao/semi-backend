@@ -401,7 +401,7 @@ class MultisigController < ApplicationController
   end
 
   # POST /confirm_multisig_tx
-  # params: multisig_tx_id, tx_hash
+  # params: multisig_tx_id, tx_hash, gas_used, user_op_hash（可选，用于精确定位 UserOp）
   # Called by frontend after successful on-chain execution
   def confirm_tx
     tx = MultisigTransaction.find_by(id: params[:multisig_tx_id])
@@ -419,7 +419,7 @@ class MultisigController < ApplicationController
     # 防止伪造/复用无关 tx_hash 把交易标记为已执行。校验在状态推进之前进行，失败时交易
     # 仍停留在 executing（可由 reset_executing_tx 或前端重试恢复），不会卡在 confirming。
     chain_id = wallet.chain_id || wallet.chain.to_i
-    verify_userop_receipt!(tx_hash, chain_id, wallet.evm_chain_address)
+    verify_userop_receipt!(tx_hash, chain_id, wallet.evm_chain_address, params[:user_op_hash])
 
     # 校验通过后再原子推进状态：防止并发 confirm 导致 apply_wallet_config 执行两次
     updated = MultisigTransaction.where(id: tx.id, status: "executing").update_all(status: "confirming")
@@ -784,7 +784,7 @@ class MultisigController < ApplicationController
 
   # 失败闭合校验：链上必须存在该 tx_hash 的成功回执，且回执确实对应本 Safe 的 UserOp。
   # 任一条件不满足即抛错（不降级信任前端），从而阻止伪造/复用无关 tx_hash 的确认。
-  def verify_userop_receipt!(tx_hash, chain_id, safe_address)
+  def verify_userop_receipt!(tx_hash, chain_id, safe_address, user_op_hash = nil)
     safe = safe_address.to_s.downcase
 
     # 容忍 RPC 节点同步延迟：短暂重试后仍读不到则失败闭合（让前端稍后重试）。
@@ -796,23 +796,36 @@ class MultisigController < ApplicationController
     end
 
     raise AppError.new("链上回执暂不可用，请稍后重试确认（tx 仍可恢复）") if receipt.nil?
+
+    # 注意：这一条只说明**那笔打包交易**成功了，不代表我们的 UserOp 成功。
+    # EntryPoint 会 catch 住内层调用的 revert，handleOps 照样返回 0x1。
+    # 真正的成败在下面的 UserOperationEvent 里。
     raise AppError.new("Transaction failed on chain") unless receipt["status"] == "0x1"
 
     # 必须由 4337 EntryPoint 提交，排除任意普通成功交易的 hash
     to_addr = receipt["to"].to_s.downcase
     raise AppError.new("回执非 4337 EntryPoint 交易，拒绝确认") unless to_addr == ENTRY_POINT_V07
 
-    # 回执必须与本 Safe 绑定：执行过程中 Safe 会发出自身事件（log.address == safe），
-    # 或 EntryPoint 的 UserOperationEvent 以 safe 作为 sender（topic 含左补零的 safe 地址）。
     logs = receipt["logs"] || []
     padded_safe = "0x#{"0" * 24}#{safe.sub(/\A0x/, "")}"
+
+    # 回执必须与本 Safe 绑定：执行过程中 Safe 会发出自身事件（log.address == safe），
+    # 或 EntryPoint 的 UserOperationEvent 以 safe 作为 sender（topic 含左补零的 safe 地址）。
     involves_safe = logs.any? do |log|
       addr = log["address"].to_s.downcase
       topics = (log["topics"] || []).map { |t| t.to_s.downcase }
       addr == safe || topics.include?(padded_safe)
     end
     raise AppError.new("回执未涉及本多签数字身份，拒绝确认") unless involves_safe
+
+    # 打包交易成功不等于这笔 UserOp 成功 —— 见 UserOpReceipt。
+    begin
+      UserOpReceipt.assert_succeeded!(logs, padded_safe, user_op_hash)
+    rescue UserOpReceipt::NotFound, UserOpReceipt::Reverted => e
+      raise AppError.new("#{e.message}，拒绝确认")
+    end
   end
+
 
   def serialize_tx(tx, include_signatures: false)
     wallet = tx.wallet

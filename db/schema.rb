@@ -72,6 +72,8 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_04_000001) do
     t.index ["wallet_id", "queue_position"], name: "index_multisig_transactions_on_wallet_id_and_queue_position"
     t.index ["wallet_id", "status"], name: "index_multisig_transactions_on_wallet_id_and_status"
     t.index ["wallet_id"], name: "index_multisig_transactions_on_wallet_id"
+  end
+
   create_table "handle_aliases", force: :cascade do |t|
     t.string "user_id", null: false
     t.string "alias", null: false
