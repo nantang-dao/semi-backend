@@ -23,8 +23,8 @@ class MultisigController < ApplicationController
     # Ensure no duplicate address
     raise AppError.new("Duplicate owner addresses") if owner_addresses.uniq.length != owner_addresses.length
 
-    # Check if wallet already exists
-    raise AppError.new("Wallet already exists") if Wallet.find_by(evm_chain_address: safe_address)
+    # Check if wallet already exists on this chain
+    raise AppError.new("Wallet already exists on this chain") if Wallet.find_by(evm_chain_address: safe_address, chain_id: chain_id)
 
     wallet = nil
     ActiveRecord::Base.transaction do
