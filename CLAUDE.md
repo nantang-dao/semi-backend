@@ -53,6 +53,7 @@ Users and Wallets use TSID (Time-Sorted ID) instead of auto-increment integers. 
 - **Wallet**: User can have multiple wallets with encrypted keys
 - **Transaction**: Blockchain transaction records linked to user
 - **TokenClass**: Registry of ERC20/ERC721/ERC1155 tokens across chains
+- **Multisig** (`Wallet` with `wallet_type: "multisig"`, `WalletOwner`, `MultisigTransaction`, `MultisigSignature`): one wallet row per Safe address per chain; owner changes are proposed across chains as a group. See `docs/multisig.md`.
 - **AuthToken**: Bearer tokens for API authentication
 - **VerificationToken**: Temporary codes for phone/email verification
 
@@ -67,4 +68,4 @@ Two custom error classes in ApplicationController:
 
 ## Deployment
 
-Deployed to Fly.io (see `fly.toml`). Uses PostgreSQL database.
+Deployed with **ginger** to `homepod.sola.day` (see `ginger.yml`), served at `api.semi.im`. Migrations run on container start. `fly.toml` is legacy. Uses PostgreSQL database.
