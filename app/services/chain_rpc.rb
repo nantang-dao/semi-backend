@@ -9,7 +9,8 @@ class ChainRpc
   RPC_URLS = {
     1 => "https://eth-mainnet.g.alchemy.com/v2/#{ALCHEMY_API_KEY}",
     10 => "https://opt-mainnet.g.alchemy.com/v2/#{ALCHEMY_API_KEY}",
-    11155111 => "https://eth-sepolia.g.alchemy.com/v2/#{ALCHEMY_API_KEY}"
+    11155111 => "https://eth-sepolia.g.alchemy.com/v2/#{ALCHEMY_API_KEY}",
+    42161 => "https://arb-mainnet.g.alchemy.com/v2/#{ALCHEMY_API_KEY}"
   }.freeze
 
   # Safe 合约 v1.4.1 函数选择器
