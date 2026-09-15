@@ -1,0 +1,44 @@
+app/models/wallet.rb
+  s_9865a8e1d3b42a::t_02ba7b647c6591 21-25,41
+  s_9865a8e1d3b42a::t_7e40dd138c1f17 34-37
+  s_9865a8e1d3b42a::t_0ee62de2900f01 9-20,26-33,38-40,42-48
+test/controllers/multisig_controller_test.rb
+  s_9865a8e1d3b42a::t_7ee9adcda2f32f 68-84
+  s_9865a8e1d3b42a::t_edf95d91994169 130-131
+  s_9865a8e1d3b42a::t_83addf894f2a71 1-67,85-129,132-196
+app/controllers/multisig_controller.rb
+  s_9865a8e1d3b42a::t_4de284eea053d9 230-241
+  s_9865a8e1d3b42a::t_e61a6b82af5625 319,326-352,354-364,368-389
+  s_9865a8e1d3b42a::t_cb2ab8be039cbc 5-8,12,19-23,37-40,42,44-55,57-85,88-98,103-106
+  s_9865a8e1d3b42a::t_7e40dd138c1f17 640-646,648-661,664-665,887-968,1000-1001,1112-1117
+  s_9865a8e1d3b42a::t_02ba7b647c6591 36,86,353
+  s_9865a8e1d3b42a::t_edf95d91994169 365-367,390,969-979
+  s_9865a8e1d3b42a::t_cdcbc1e65f04aa 87,391,980,1118
+docs/multisig.md
+  s_9865a8e1d3b42a::t_cf86bab5984822 25-51,53
+  s_9865a8e1d3b42a::t_8997fc0c73e20d 52
+db/migrate/20260915000001_multisig_multichain.rb
+  s_9865a8e1d3b42a::t_02ba7b647c6591 23-24
+  s_9865a8e1d3b42a::t_79d2765bdfacab 15-20
+  s_9865a8e1d3b42a::t_ecf7648d8ba994 1-14,21-22,25-77
+config/routes.rb
+  s_9865a8e1d3b42a::t_79d2765bdfacab 40,45
+db/schema.rb
+  s_9865a8e1d3b42a::t_c355b4751d3739 13,123,125,293-295
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "70ba07e74cbeeefc59be881ea2c758beb8066e26",
+  "prompts": {},
+  "sessions": {
+    "s_9865a8e1d3b42a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d88730f8-9d18-4f98-9a1d-1f109d89c325",
+        "model": "claude-opus-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
