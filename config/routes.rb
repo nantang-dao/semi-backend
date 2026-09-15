@@ -37,10 +37,12 @@ Rails.application.routes.draw do
 
   # Multisig
   post "create_multisig_wallet"       => "multisig#create_wallet"
+  post "add_multisig_wallet_chains"   => "multisig#add_wallet_chains"
   get  "get_multisig_wallets"         => "multisig#get_wallets"
   get  "get_multisig_wallet_owners"   => "multisig#get_wallet_owners"
   post "sync_multisig_wallet"         => "multisig#sync_wallet"
   post "propose_multisig_tx"          => "multisig#propose_tx"
+  post "propose_multisig_tx_group"    => "multisig#propose_tx_group"
   get  "get_multisig_txs"             => "multisig#get_txs"
   get  "get_multisig_tx"              => "multisig#get_tx"
   post "submit_multisig_signature"    => "multisig#submit_signature"

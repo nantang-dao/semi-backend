@@ -1,0 +1,196 @@
+require "test_helper"
+
+class MultisigControllerTest < ActionDispatch::IntegrationTest
+  ALICE = "0x1111111111111111111111111111111111111111"
+  BOB = "0x2222222222222222222222222222222222222222"
+  CAROL = "0x3333333333333333333333333333333333333333"
+  SAFE = "0x53d961df57ccd0da6e6d6eae3377d4ea5b3f273d"
+
+  # addOwnerWithThreshold / removeOwner / changeThreshold 的选择器 + 占位参数
+  ADD_OWNER_DATA = "0x0d582f13#{"0" * 128}"
+  REMOVE_OWNER_DATA = "0xf8dc5dd9#{"0" * 192}"
+  CHANGE_THRESHOLD_DATA = "0x694e80c3#{"0" * 64}"
+
+  setup do
+    @alice = User.create!(evm_chain_active_key: ALICE, handle: "alice-#{SecureRandom.hex(3)}")
+    @bob = User.create!(evm_chain_active_key: BOB, handle: "bob-#{SecureRandom.hex(3)}")
+    @alice_token = AuthToken.create!(user: @alice).token
+    @bob_token = AuthToken.create!(user: @bob).token
+  end
+
+  def auth(token = @alice_token)
+    { "Authorization" => "Bearer #{token}" }
+  end
+
+  def body
+    JSON.parse(@response.body)
+  end
+
+  def create_wallet(chain_ids: [ 10, 42161, 1 ], owners: [ ALICE, BOB ], threshold: 2)
+    post "/create_multisig_wallet", params: {
+      name: "Team", chain_id: chain_ids.first, chain_ids: chain_ids,
+      owners: owners.map { |a| { address: a } }, threshold: threshold, safe_address: SAFE
+    }, headers: auth, as: :json
+    assert_response :success, @response.body
+    body["wallets"]
+  end
+
+  test "creates one wallet row per chain with the same owners and initial config" do
+    wallets = create_wallet
+    assert_equal [ 10, 42161, 1 ], wallets.map { |w| w["chain_id"] }
+    wallets.each do |w|
+      assert_equal SAFE, w["safe_address"]
+      assert_equal [ ALICE, BOB ], w["initial_owners"]
+      assert_equal 2, w["initial_threshold"]
+    end
+
+    get "/get_multisig_wallets", headers: auth(@bob_token)
+    assert_equal 3, body["wallets"].length
+  end
+
+  test "rejects mixing mainnet and testnet chains" do
+    post "/create_multisig_wallet", params: {
+      name: "Team", chain_id: 10, chain_ids: [ 10, 11155111 ],
+      owners: [ { address: ALICE }, { address: BOB } ], threshold: 1, safe_address: SAFE
+    }, headers: auth, as: :json
+    assert_response :bad_request
+  end
+
+  test "same address cannot be registered twice on a chain" do
+    create_wallet(chain_ids: [ 10 ])
+    post "/create_multisig_wallet", params: {
+      name: "Again", chain_id: 10, owners: [ { address: ALICE }, { address: BOB } ], threshold: 1, safe_address: SAFE
+    }, headers: auth, as: :json
+    assert_response :bad_request
+    assert_equal "Wallet already exists", body["message"]
+  end
+
+  test "legacy rows with mixed-case addresses are matched without being rewritten" do
+    mixed = "0x53D961df57ccd0da6e6d6eae3377d4ea5b3f273D"
+    legacy = Wallet.create!(user_id: @alice.id, name: "Old", wallet_type: "multisig", chain: "10", chain_id: 10,
+                            evm_chain_address: mixed, threshold: 2, initial_owners: [ ALICE, BOB ], initial_threshold: 2)
+    [ ALICE, BOB ].each_with_index { |a, i| WalletOwner.create!(wallet: legacy, owner_address: a, position: i) }
+
+    post "/create_multisig_wallet", params: {
+      name: "Dup", chain_id: 10, owners: [ { address: ALICE }, { address: BOB } ], threshold: 2, safe_address: SAFE
+    }, headers: auth, as: :json
+    assert_equal "Wallet already exists", body["message"]
+
+    post "/add_multisig_wallet_chains", params: { wallet_id: legacy.id, chain_ids: [ 42161 ] }, headers: auth, as: :json
+    assert_response :success, @response.body
+    assert_equal mixed, legacy.reload.evm_chain_address
+    assert_equal [ legacy.id ], Wallet.find(body["wallets"].first["id"]).multisig_siblings.pluck(:id)
+  end
+
+  test "add_multisig_wallet_chains builds new rows from the initial config, not current owners" do
+    wallets = create_wallet(chain_ids: [ 10 ])
+    op = Wallet.find(wallets.first["id"])
+    # OP 上已经加了 Carol、门限改成 1（链上配置和初始配置分叉）
+    WalletOwner.create!(wallet: op, owner_address: CAROL, position: 2)
+    op.update!(threshold: 1)
+
+    post "/add_multisig_wallet_chains", params: { wallet_id: op.id, chain_ids: [ 42161, 1, 10 ] }, headers: auth, as: :json
+    assert_response :success, @response.body
+    created = body["wallets"]
+    assert_equal [ 42161, 1 ], created.map { |w| w["chain_id"] }
+
+    arb = Wallet.find(created.first["id"])
+    assert_equal [ ALICE, BOB ], arb.owner_address_list.sort
+    assert_equal 2, arb.threshold
+  end
+
+  test "owner change on one chain is refused while other chains apply" do
+    wallets = create_wallet
+    post "/propose_multisig_tx", params: {
+      wallet_id: wallets.first["id"], tx_type: "add_owner",
+      call_detail: { new_owner: CAROL, new_threshold: 2 }, evm_call_data: ADD_OWNER_DATA
+    }, headers: auth, as: :json
+    assert_response :bad_request
+    assert_equal "group_required", body["code"]
+    assert_equal [ 42161, 1 ], body["chain_ids"].sort.reverse
+  end
+
+  test "group proposal creates one queued tx per chain sharing a group_id" do
+    wallets = create_wallet
+    post "/propose_multisig_tx_group", params: {
+      txs: wallets.map { |w| { wallet_id: w["id"], tx_type: "add_owner", call_detail: { new_owner: CAROL, new_threshold: 2 }, evm_call_data: ADD_OWNER_DATA } }
+    }, headers: auth, as: :json
+    assert_response :success, @response.body
+
+    txs = body["txs"]
+    assert_equal 3, txs.length
+    assert_equal 1, txs.map { |t| t["group_id"] }.uniq.length
+    assert_equal [ 1, 10, 42161 ], txs.first["group_txs"].map { |g| g["chain_id"] }
+    assert txs.all? { |t| t["status"] == "queued" && t["queue_position"] == 1 }
+
+    # 同一变更已在进行，不能再发一次
+    post "/propose_multisig_tx_group", params: {
+      txs: wallets.map { |w| { wallet_id: w["id"], tx_type: "add_owner", call_detail: { new_owner: CAROL, new_threshold: 2 }, evm_call_data: ADD_OWNER_DATA } }
+    }, headers: auth, as: :json
+    assert_response :bad_request
+    assert_equal "change_already_pending", body["code"]
+  end
+
+  test "group proposal must cover every applicable chain" do
+    wallets = create_wallet
+    post "/propose_multisig_tx_group", params: {
+      txs: wallets.first(2).map { |w| { wallet_id: w["id"], tx_type: "change_threshold", call_detail: { new_threshold: 1 }, evm_call_data: CHANGE_THRESHOLD_DATA } }
+    }, headers: auth, as: :json
+    assert_response :bad_request
+    assert_equal "group_required", body["code"]
+    assert_equal [ 1 ], body["chain_ids"]
+  end
+
+  test "chains where the change no longer applies are not required" do
+    wallets = create_wallet
+    # 主网上 Carol 已经是 owner（例如之前单独执行过）
+    WalletOwner.create!(wallet_id: wallets.last["id"], owner_address: CAROL, position: 2)
+
+    post "/propose_multisig_tx_group", params: {
+      txs: wallets.first(2).map { |w| { wallet_id: w["id"], tx_type: "add_owner", call_detail: { new_owner: CAROL, new_threshold: 2 }, evm_call_data: ADD_OWNER_DATA } }
+    }, headers: auth, as: :json
+    assert_response :success, @response.body
+
+    post "/propose_multisig_tx_group", params: {
+      txs: [ { wallet_id: wallets.last["id"], tx_type: "add_owner", call_detail: { new_owner: CAROL, new_threshold: 2 }, evm_call_data: ADD_OWNER_DATA } ]
+    }, headers: auth, as: :json
+    assert_response :bad_request
+  end
+
+  test "group rejects different changes per chain" do
+    wallets = create_wallet
+    post "/propose_multisig_tx_group", params: {
+      txs: wallets.each_with_index.map { |w, i| { wallet_id: w["id"], tx_type: "change_threshold", call_detail: { new_threshold: i.zero? ? 1 : 2 }, evm_call_data: CHANGE_THRESHOLD_DATA } }
+    }, headers: auth, as: :json
+    assert_response :bad_request
+  end
+
+  test "withdrawing one tx withdraws unsigned siblings in its group" do
+    wallets = create_wallet
+    post "/propose_multisig_tx_group", params: {
+      txs: wallets.map { |w| { wallet_id: w["id"], tx_type: "remove_owner", call_detail: { owner: BOB, new_threshold: 1 }, evm_call_data: REMOVE_OWNER_DATA } }
+    }, headers: auth, as: :json
+    assert_response :success, @response.body
+    txs = body["txs"]
+
+    signed = MultisigTransaction.find(txs[1]["id"])
+    signed.update!(status: "signing", nonce: "0")
+    MultisigSignature.create!(multisig_transaction_id: signed.id, signer_address: BOB, signature: "0xsig")
+
+    post "/withdraw_multisig_tx", params: { multisig_tx_id: txs[0]["id"] }, headers: auth, as: :json
+    assert_response :success, @response.body
+    assert_equal [ txs[0]["id"], txs[2]["id"] ].sort, body["withdrawn_tx_ids"].sort
+    assert_equal "signing", signed.reload.status
+  end
+
+  test "non-config transactions stay single-chain" do
+    wallets = create_wallet
+    post "/propose_multisig_tx", params: {
+      wallet_id: wallets.first["id"], tx_type: "transfer",
+      call_detail: { to: CAROL, amount: "0.1" }, evm_call_data: "0x"
+    }, headers: auth, as: :json
+    assert_response :success, @response.body
+    assert_nil body["tx"]["group_id"]
+    assert_equal 10, body["tx"]["chain_id"]
+  end
+end

@@ -2,16 +2,25 @@ class MultisigController < ApplicationController
   before_action :authenticate_user
 
   # POST /create_multisig_wallet
-  # params: name, chain_id, owners (array of {address, user_id?}), threshold, safe_address
+  # params: name, chain_id, chain_ids?, owners (array of {address, user_id?}), threshold, safe_address
+  #
+  # 同一个 Safe 地址在 chain_ids 的每条链上各建一行（地址由 CREATE2 算出，各链相同）。
+  # chain_ids 省略时只建 chain_id 这一条链。返回的 wallet 是 chain_id 那一行。
   def create_wallet
     name = params[:name].to_s.strip
     chain_id = params[:chain_id].to_i
+    chain_ids = Array(params[:chain_ids]).map(&:to_i).presence || [ chain_id ]
     threshold = params[:threshold].to_i
     safe_address = params[:safe_address].to_s.downcase.strip
     owners = params[:owners]
 
     raise AppError.new("Name is required") if name.blank?
     raise AppError.new("Invalid chain_id") unless chain_id > 0
+    raise AppError.new("chain_ids must include chain_id") unless chain_ids.include?(chain_id)
+    raise AppError.new("Duplicate chain_ids") if chain_ids.uniq.length != chain_ids.length
+    unless chain_ids.all? { |id| Wallet.multisig_chain_group(id) == Wallet.multisig_chain_group(chain_id) }
+      raise AppError.new("Unsupported chain_ids")
+    end
     raise AppError.new("Safe address is required") if safe_address.blank?
     raise AppError.new("Owners must be an array") unless owners.is_a?(Array)
     raise AppError.new("At least 2 owners required") if owners.length < 2
@@ -24,34 +33,77 @@ class MultisigController < ApplicationController
     raise AppError.new("Duplicate owner addresses") if owner_addresses.uniq.length != owner_addresses.length
 
     # Check if wallet already exists
-    raise AppError.new("Wallet already exists") if Wallet.find_by(evm_chain_address: safe_address)
+    if Wallet.multisig_at(safe_address).where(chain_id: chain_ids).exists?
+      raise AppError.new("Wallet already exists")
+    end
 
-    wallet = nil
+    user_ids = owners.to_h { |o| [ o[:address].to_s.downcase, o[:user_id].presence ] }
+
+    wallets = nil
     ActiveRecord::Base.transaction do
-      wallet = Wallet.create!(
-        user_id: current_user.id,
-        name: name,
-        wallet_type: "multisig",
-        chain: chain_id.to_s,
-        chain_id: chain_id,
-        evm_chain_address: safe_address,
-        threshold: threshold,
-        format: "safe_4337"
-      )
-
-      owner_addresses.sort.each_with_index do |addr, idx|
-        owner_user = User.find_by("LOWER(evm_chain_active_key) = ?", addr)
-        matched_owner = owners.find { |o| o[:address].to_s.downcase == addr }
-        WalletOwner.create!(
-          wallet_id: wallet.id,
-          user_id: matched_owner&.dig(:user_id) || owner_user&.id,
-          owner_address: addr,
-          position: idx
+      wallets = chain_ids.map do |id|
+        create_multisig_wallet_row!(
+          name: name,
+          creator_id: current_user.id,
+          chain_id: id,
+          safe_address: safe_address,
+          owner_addresses: owner_addresses,
+          threshold: threshold,
+          user_ids: user_ids
         )
       end
     end
 
-    render json: { result: "ok", wallet: serialize_wallet(wallet) }
+    primary = wallets.find { |w| w.chain_id == chain_id }
+    render json: { result: "ok", wallet: serialize_wallet(primary), wallets: wallets.map { |w| serialize_wallet(w) } }
+  rescue ActiveRecord::RecordNotUnique
+    raise AppError.new("Wallet already exists")
+  end
+
+  # POST /add_multisig_wallet_chains
+  # params: wallet_id, chain_ids
+  #
+  # 给已有多签钱包补上其他链的行（老钱包只有创建时那条链）。新行的 owner /
+  # 门限是 Safe 的**初始配置**：在还没部署的链上，这才是 Safe 的有效状态。
+  #
+  # 后端无法验证初始配置能算出这个地址（CREATE2 预测要读链上 proxy 字节码），
+  # 由前端先预测、对得上才调用。已存在的链直接跳过。
+  def add_wallet_chains
+    wallet = find_multisig_wallet(params[:wallet_id])
+    ensure_is_owner!(wallet)
+
+    initial_owners = Array(wallet.initial_owners).map { |a| a.to_s.downcase }
+    initial_threshold = wallet.initial_threshold.to_i
+    if initial_owners.empty? || initial_threshold < 1 || initial_threshold > initial_owners.length
+      raise AppError.new("This wallet has no recorded initial configuration")
+    end
+
+    group = Wallet.multisig_chain_group(wallet.multisig_chain_id)
+    chain_ids = Array(params[:chain_ids]).map(&:to_i).uniq
+    raise AppError.new("chain_ids is required") if chain_ids.empty?
+    raise AppError.new("Unsupported chain_ids") unless group && chain_ids.all? { |id| group.include?(id) }
+
+    existing = Wallet.multisig_at(wallet.evm_chain_address).where(chain_id: chain_ids).pluck(:chain_id)
+
+    created = []
+    ActiveRecord::Base.transaction do
+      (chain_ids - existing).each do |id|
+        created << create_multisig_wallet_row!(
+          name: wallet.name,
+          creator_id: wallet.user_id,
+          chain_id: id,
+          safe_address: wallet.evm_chain_address,
+          owner_addresses: initial_owners,
+          threshold: initial_threshold,
+          user_ids: {}
+        )
+      end
+    end
+
+    render json: { result: "ok", wallets: created.map { |w| serialize_wallet(w) } }
+  rescue ActiveRecord::RecordNotUnique
+    # 并发补链：另一个请求已经建好了，结果一样
+    render json: { result: "ok", wallets: [] }
   end
 
   # GET /get_multisig_wallets
@@ -175,6 +227,18 @@ class MultisigController < ApplicationController
     # 验证配置类交易的 callData 函数选择器与 tx_type 匹配
     validate_config_calldata!(tx_type, evm_call_data, call_detail)
 
+    # owner 变更必须同时发到所有适用的链，走 propose_multisig_tx_group
+    if CONFIG_TX_SELECTORS.key?(tx_type)
+      missing = required_group_wallets(wallet, tx_type, call_detail).reject { |w| w.id == wallet.id }
+      if missing.any?
+        raise AppError.new(
+          "Owner changes must be proposed on all chains at once",
+          code: "group_required",
+          data: { chain_ids: missing.map(&:multisig_chain_id) }
+        )
+      end
+    end
+
     # 为配置类交易补充地址对应的名字到 call_detail
     call_detail = enrich_call_detail_names(call_detail, wallet)
 
@@ -252,26 +316,77 @@ class MultisigController < ApplicationController
       else
         raise AppError.new("replaces_tx_id is only valid for cancel transactions") if replaces_tx_id.present?
 
-        next_position = next_queue_position(wallet.id)
-        tx = MultisigTransaction.create!(
-          wallet_id: wallet.id,
-          proposer_id: current_user.id,
-          chain_id: wallet.chain_id || wallet.chain.to_i,
-          queue_position: next_position,
-          tx_type: tx_type,
-          call_detail: call_detail,
-          evm_call_data: evm_call_data,
-          threshold_at_creation: wallet.threshold,
-          replaces_tx_id: nil,
-          status: "queued",
-          expires_at: expires_at,
-          memo: memo,
-          sender_note: sender_note
-        )
+        tx = create_queued_tx!(wallet, tx_type, call_detail, evm_call_data, memo: memo, sender_note: sender_note)
       end
     end
 
     render json: { result: "ok", tx: serialize_tx(tx) }
+  end
+
+  # POST /propose_multisig_tx_group
+  # params: txs (array of {wallet_id, tx_type, call_detail, evm_call_data}), memo?
+  #
+  # 一次 owner 变更在同一 Safe 的每条链上各建一笔交易，用 group_id 关联。
+  # calldata 由前端按链分别编码——removeOwner / swapOwner 的 prevOwner 取决于
+  # 该链上 owner 链表的顺序，各链可能不同。
+  #
+  # 必须覆盖所有「当前用户是 owner、且这项变更在该链上仍然适用」的链，
+  # 否则各链的签名人会逐渐分叉。
+  def propose_tx_group
+    entries = Array(params[:txs])
+    raise AppError.new("txs is required") if entries.empty?
+    memo = params[:memo].to_s.strip.presence
+
+    items = entries.map do |entry|
+      wallet = find_multisig_wallet(entry[:wallet_id])
+      ensure_is_owner!(wallet)
+      tx_type = entry[:tx_type].to_s
+      raise AppError.new("Only owner changes can be proposed as a group") unless CONFIG_TX_SELECTORS.key?(tx_type)
+      call_detail = entry[:call_detail].respond_to?(:to_unsafe_h) ? entry[:call_detail].to_unsafe_h : (entry[:call_detail] || {})
+      evm_call_data = entry[:evm_call_data].to_s
+      validate_config_calldata!(tx_type, evm_call_data, call_detail)
+      { wallet: wallet, tx_type: tx_type, call_detail: call_detail, evm_call_data: evm_call_data }
+    end
+
+    first = items.first
+    wallets = items.map { |i| i[:wallet] }
+    if wallets.map { |w| w.evm_chain_address.to_s.downcase }.uniq.length != 1 || wallets.map(&:multisig_chain_group_key).uniq.length != 1
+      raise AppError.new("All transactions in a group must belong to the same wallet")
+    end
+    raise AppError.new("Duplicate chains in group") if wallets.map(&:id).uniq.length != wallets.length
+    if items.any? { |i| i[:tx_type] != first[:tx_type] || change_key(i[:tx_type], i[:call_detail]) != change_key(first[:tx_type], first[:call_detail]) }
+      raise AppError.new("All transactions in a group must make the same change")
+    end
+
+    items.each do |i|
+      unless config_change_applicable?(i[:wallet], i[:tx_type], i[:call_detail])
+        raise AppError.new("This change does not apply on chain #{i[:wallet].multisig_chain_id}")
+      end
+      if same_change_pending?(i[:wallet], i[:tx_type], i[:call_detail])
+        raise AppError.new("The same change is already pending on chain #{i[:wallet].multisig_chain_id}", code: "change_already_pending")
+      end
+    end
+
+    required = required_group_wallets(first[:wallet], first[:tx_type], first[:call_detail])
+    missing = required.map(&:id) - wallets.map(&:id)
+    if missing.any?
+      raise AppError.new(
+        "Owner changes must be proposed on all chains at once",
+        code: "group_required",
+        data: { chain_ids: required.select { |w| missing.include?(w.id) }.map(&:multisig_chain_id) }
+      )
+    end
+
+    group_id = Tsid::Generator.new.generate
+    txs = []
+    ActiveRecord::Base.transaction do
+      items.each do |i|
+        call_detail = enrich_call_detail_names(i[:call_detail], i[:wallet])
+        txs << create_queued_tx!(i[:wallet], i[:tx_type], call_detail, i[:evm_call_data], memo: memo, group_id: group_id)
+      end
+    end
+
+    render json: { result: "ok", group_id: group_id, txs: txs.map { |tx| serialize_tx(tx) } }
   end
 
   # GET /get_multisig_txs?wallet_id=xxx&scope=queue|history
@@ -522,19 +637,32 @@ class MultisigController < ApplicationController
     raise AppError.new("Can only withdraw queued transactions with no signatures") unless tx.status == "queued"
     raise AppError.new("Cannot withdraw a transaction that has been signed") if tx.signature_count > 0
 
-    ActiveRecord::Base.transaction do
-      withdrawn_pos = tx.queue_position
-      tx.update!(status: "withdrawn", queue_position: nil)
-
-      # Shift remaining queue positions forward
-      MultisigTransaction.active
-                         .where(wallet_id: tx.wallet_id)
-                         .where("queue_position > ?", withdrawn_pos)
-                         .update_all("queue_position = queue_position - 1")
+    # 同组其他链上还没人签过的交易一起撤回；已经有人签了的留着，由各链自行处理
+    targets = [ tx ]
+    if tx.group_id.present?
+      targets += MultisigTransaction.where(group_id: tx.group_id, status: "queued", proposer_id: current_user.id)
+                                    .where.not(id: tx.id)
+                                    .select { |t| t.signature_count == 0 }
     end
 
-    tx.freeze_owner_snapshot!
-    render json: { result: "ok" }
+    withdrawn_ids = []
+    ActiveRecord::Base.transaction do
+      targets.each do |t|
+        withdrawn_pos = t.queue_position
+        t.update!(status: "withdrawn", queue_position: nil)
+        withdrawn_ids << t.id
+
+        # Shift remaining queue positions forward
+        next if withdrawn_pos.nil?
+        MultisigTransaction.active
+                           .where(wallet_id: t.wallet_id)
+                           .where("queue_position > ?", withdrawn_pos)
+                           .update_all("queue_position = queue_position - 1")
+      end
+    end
+
+    targets.each(&:freeze_owner_snapshot!)
+    render json: { result: "ok", withdrawn_tx_ids: withdrawn_ids }
   end
 
   # GET /lookup_multisig_tx_memos?tx_hashes=hash1,hash2,...
@@ -756,6 +884,100 @@ class MultisigController < ApplicationController
     end
   end
 
+  def create_multisig_wallet_row!(name:, creator_id:, chain_id:, safe_address:, owner_addresses:, threshold:, user_ids:)
+    sorted = owner_addresses.map(&:downcase).sort
+    wallet = Wallet.create!(
+      user_id: creator_id,
+      name: name,
+      wallet_type: "multisig",
+      chain: chain_id.to_s,
+      chain_id: chain_id,
+      evm_chain_address: safe_address,
+      threshold: threshold,
+      initial_owners: sorted,
+      initial_threshold: threshold,
+      format: "safe_4337"
+    )
+
+    sorted.each_with_index do |addr, idx|
+      owner_user = User.find_by("LOWER(evm_chain_active_key) = ?", addr)
+      WalletOwner.create!(
+        wallet_id: wallet.id,
+        user_id: user_ids[addr] || owner_user&.id,
+        owner_address: addr,
+        position: idx
+      )
+    end
+
+    wallet
+  end
+
+  def create_queued_tx!(wallet, tx_type, call_detail, evm_call_data, memo: nil, sender_note: nil, group_id: nil)
+    MultisigTransaction.create!(
+      wallet_id: wallet.id,
+      proposer_id: current_user.id,
+      chain_id: wallet.multisig_chain_id,
+      queue_position: next_queue_position(wallet.id),
+      tx_type: tx_type,
+      call_detail: call_detail,
+      evm_call_data: evm_call_data,
+      threshold_at_creation: wallet.threshold,
+      replaces_tx_id: nil,
+      status: "queued",
+      expires_at: 5.days.from_now,
+      memo: memo,
+      sender_note: sender_note,
+      group_id: group_id
+    )
+  end
+
+  # 描述「这是哪一项变更」的字段，与 prevOwner 这类按链不同的字段无关
+  def change_key(tx_type, call_detail)
+    d = call_detail.is_a?(Hash) ? call_detail.with_indifferent_access : {}
+    case tx_type
+    when "add_owner" then [ d[:new_owner].to_s.downcase, d[:new_threshold].to_i ]
+    when "remove_owner" then [ d[:owner].to_s.downcase, d[:new_threshold].to_i ]
+    when "replace_owner" then [ d[:old_owner].to_s.downcase, d[:new_owner].to_s.downcase ]
+    when "change_threshold" then [ d[:new_threshold].to_i ]
+    end
+  end
+
+  # 这项变更按该链当前的 owner / 门限是否还能执行
+  def config_change_applicable?(wallet, tx_type, call_detail)
+    owners = wallet.owner_address_list
+    d = call_detail.is_a?(Hash) ? call_detail.with_indifferent_access : {}
+    t = d[:new_threshold].to_i
+    case tx_type
+    when "add_owner"
+      !owners.include?(d[:new_owner].to_s.downcase) && t >= 1 && t <= owners.length + 1
+    when "remove_owner"
+      owners.include?(d[:owner].to_s.downcase) && owners.length > 1 && t >= 1 && t <= owners.length - 1
+    when "replace_owner"
+      owners.include?(d[:old_owner].to_s.downcase) && !owners.include?(d[:new_owner].to_s.downcase)
+    when "change_threshold"
+      t >= 1 && t <= owners.length && t != wallet.threshold
+    else
+      false
+    end
+  end
+
+  # 同一 Safe 各链中，这项变更必须一起发起的钱包行：当前用户是 owner、变更仍适用、
+  # 且没有一笔相同变更正在进行（避免重复发起，也让单链重提失败交易成为可能）。
+  def required_group_wallets(wallet, tx_type, call_detail)
+    user_addr = current_user.evm_chain_active_key.to_s.downcase
+    ([ wallet ] + wallet.multisig_siblings.to_a).select do |w|
+      w.owner_address_list.include?(user_addr) &&
+        config_change_applicable?(w, tx_type, call_detail) &&
+        !same_change_pending?(w, tx_type, call_detail)
+    end
+  end
+
+  def same_change_pending?(wallet, tx_type, call_detail)
+    key = change_key(tx_type, call_detail)
+    wallet.multisig_transactions.where(status: %w[queued signing ready executing confirming], tx_type: tx_type)
+          .any? { |t| change_key(t.tx_type, t.call_detail) == key }
+  end
+
   def next_queue_position(wallet_id)
     # 使用 advisory lock 防止并发提案产生相同的 queue_position
     lock_key = Digest::MD5.hexdigest("multisig_queue_#{wallet_id}")[0, 15].to_i(16)
@@ -775,6 +997,8 @@ class MultisigController < ApplicationController
       chain_id: wallet.chain_id || wallet.chain.to_i,
       safe_address: wallet.evm_chain_address,
       threshold: wallet.threshold,
+      initial_owners: wallet.initial_owners,
+      initial_threshold: wallet.initial_threshold,
       created_at: wallet.created_at
     }
   end
@@ -884,6 +1108,13 @@ class MultisigController < ApplicationController
       created_at: tx.created_at,
       updated_at: tx.updated_at
     }
+
+    if tx.group_id.present?
+      data[:group_id] = tx.group_id
+      data[:group_txs] = MultisigTransaction.where(group_id: tx.group_id).order(:chain_id).map do |g|
+        { id: g.id, wallet_id: g.wallet_id, chain_id: g.chain_id, status: g.status, tx_hash: g.tx_hash }
+      end
+    end
 
     if include_signatures
       data[:signatures] = tx.signatures_data

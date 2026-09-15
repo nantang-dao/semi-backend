@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_01_000001) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_15_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -120,7 +120,9 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_01_000001) do
     t.string "sender_note"
     t.string "executor_id"
     t.decimal "gas_used", precision: 80, default: "0", null: false
+    t.string "group_id"
     t.index ["executor_id"], name: "index_multisig_transactions_on_executor_id"
+    t.index ["group_id"], name: "index_multisig_transactions_on_group_id"
     t.index ["wallet_id", "queue_position"], name: "index_multisig_transactions_on_wallet_id_and_queue_position"
     t.index ["wallet_id", "status"], name: "index_multisig_transactions_on_wallet_id_and_status"
     t.index ["wallet_id"], name: "index_multisig_transactions_on_wallet_id"
@@ -288,6 +290,9 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_01_000001) do
     t.datetime "updated_at", null: false
     t.integer "threshold", default: 1, null: false
     t.integer "chain_id"
+    t.jsonb "initial_owners"
+    t.integer "initial_threshold"
+    t.index "lower((evm_chain_address)::text), chain_id", name: "index_multisig_wallets_on_address_and_chain", unique: true, where: "((wallet_type)::text = 'multisig'::text)"
   end
 
   add_foreign_key "auth_tokens", "users"
