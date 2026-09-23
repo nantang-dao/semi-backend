@@ -1,0 +1,25 @@
+app/controllers/multisig_controller.rb
+  s_9865a8e1d3b42a::t_4147d389fab5d9 66-71,90-97
+  s_9865a8e1d3b42a::t_1650e77465a672 98
+docs/multisig.md
+  s_9865a8e1d3b42a::t_ace92f85c08373 41,43-49,54
+test/controllers/multisig_controller_test.rb
+  s_9865a8e1d3b42a::t_55b7758654d02c 85,89-90,93,100-124
+  s_9865a8e1d3b42a::t_b4cd9c088b38d0 125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b28e92588392876a4b57f2339fac0ee086bca6ae",
+  "prompts": {},
+  "sessions": {
+    "s_9865a8e1d3b42a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d88730f8-9d18-4f98-9a1d-1f109d89c325",
+        "model": "claude-opus-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
