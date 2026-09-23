@@ -63,8 +63,12 @@ class MultisigController < ApplicationController
   # POST /add_multisig_wallet_chains
   # params: wallet_id, chain_ids
   #
-  # 给已有多签钱包补上其他链的行（老钱包只有创建时那条链）。新行的 owner /
-  # 门限是 Safe 的**初始配置**：在还没部署的链上，这才是 Safe 的有效状态。
+  # 为多签钱包启用同组的其他链（钱包默认只在创建时那条链上，其余链由任一
+  # owner 手动启用）。新行的 owner / 门限是 Safe 的**初始配置**：在还没部署的
+  # 链上，这才是 Safe 的有效状态。
+  #
+  # 所以只有成员和门限从没变过、也没有进行中的成员变更时才能启用——否则新链
+  # 上生效的会是旧成员（例如已被移除的人），各链配置从此分叉。
   #
   # 后端无法验证初始配置能算出这个地址（CREATE2 预测要读链上 proxy 字节码），
   # 由前端先预测、对得上才调用。已存在的链直接跳过。
@@ -82,6 +86,15 @@ class MultisigController < ApplicationController
     chain_ids = Array(params[:chain_ids]).map(&:to_i).uniq
     raise AppError.new("chain_ids is required") if chain_ids.empty?
     raise AppError.new("Unsupported chain_ids") unless group && chain_ids.all? { |id| group.include?(id) }
+
+    rows = [ wallet ] + wallet.multisig_siblings.to_a
+    if rows.any? { |w| w.owner_address_list.sort != initial_owners.sort || w.threshold.to_i != initial_threshold }
+      raise AppError.new("Members or threshold have changed since creation", code: "config_changed")
+    end
+    if MultisigTransaction.where(wallet_id: rows.map(&:id), tx_type: CONFIG_TX_SELECTORS.keys)
+                          .where.not(status: MultisigTransaction::TERMINAL_STATUSES).exists?
+      raise AppError.new("A member change is in progress", code: "config_change_pending")
+    end
 
     existing = Wallet.multisig_at(wallet.evm_chain_address).where(chain_id: chain_ids).pluck(:chain_id)
 

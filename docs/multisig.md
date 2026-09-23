@@ -38,16 +38,20 @@
 - **每一行的 owner 就是 Safe 在那条链上的有效 owner。** 已部署的链是链上状态；未部署的链是初始配置，第一笔 UserOp 用它生成 initCode。所以建快照、签名、执行只看这一行，semi-core 不需要感知多链。
 - `wallets.initial_owners` / `initial_threshold`：部署用的初始配置（owner 已排序）。新钱包创建时写入；老钱包由迁移还原（最早一笔已执行配置交易的 `owner_snapshot` + `threshold_at_creation`，没有则取当前值）。
 
-### 创建与补链
+### 创建与启用链
 
-- `create_multisig_wallet` 带 `chain_ids`，一次在同组每条链上建行。
-- 老钱包只有创建时那条链：前端 `fetchWallets` 时调用 `addMissingChainRows`，先用初始配置**预测地址**，与 Safe 地址一致才调 `add_multisig_wallet_chains` 按初始配置建行。对不上（例如在 Semi 之外改过 owner）就不补。
-- 切换网络时 `alignActiveWalletToChain` 把当前多签钱包换成同地址在新链上的行；当前用户在那条链上不是 owner 时退回个人钱包。
+- 钱包**默认只在创建时的那条链上**。Arbitrum、主网都不是默认开启的，由成员按需手动启用：不是每个钱包都要用主网（自付 gas），也不该为不用的链生成 owner 变更提案。
+- `create_multisig_wallet` 支持 `chain_ids`，前端只传当前链。
+- 启用：钱包主页的链状态里点「启用」→ 前端 `enableMultisigChain` 先用初始配置**预测地址**，与 Safe 地址一致才调 `add_multisig_wallet_chains` 按初始配置建行。任一 owner 都可以启用，不需要多签审批（启用只建后端记录，不上链、不花钱）。
+- **成员或门槛变更过后不能再启用新链**：未部署的链上 Safe 的有效成员只能是初始成员（地址由它算出），变更过的钱包在新链上生效的会是旧成员（包括已被移除的人）。后端检查所有已启用链的行 owner/threshold 都等于初始配置，否则返回 `config_changed`；有进行中（非终态）的配置类交易时返回 `config_change_pending`（否则那笔变更不会发到新链，执行后同样分叉）。
+- 地址本身无法「关闭」：没启用的链上，这个地址照样能收款，初始成员随时可以部署并动用。
+- 切换网络时 `alignActiveWalletToChain` 把当前多签钱包换成同地址在新链上的行；没在那条链启用（或当前用户在那条链上不是 owner）时退回个人钱包并提示。钱包列表按 Safe 地址去重，没在当前链启用的钱包也列出，点击时切到它已启用的链（优先已激活的）。
+- 历史数据：本规则上线前，前端曾自动为老钱包补齐三条链（`addMissingChainRows`，已删除），生产上因此存在一些没用过的 Arbitrum / 主网行。
 
 ### owner 变更：一次对所有链发起
 
 - `propose_multisig_tx_group`：每条链一笔，共享 `group_id`。calldata 由前端按链编码——`removeOwner` / `swapOwner` 的 prevOwner 取决于该链 owner 链表：已部署读链上，未部署按排序后的初始 owner（Safe 按 initializer 顺序建链表）。fork 测试「未部署的链上：部署与 removeOwner 在同一笔 UserOp 里完成」验证了这一点。
-- 必须覆盖所有「当前用户是 owner、变更仍适用、且没有同一变更在进行」的链（`required_group_wallets`），否则返回 `group_required` 和缺的 `chain_ids`。`propose_multisig_tx` 对配置类交易同样检查，因此单链只能在其他链都已生效时发起（例如重提某条链上失败的交易）。
+- 只发到**已启用**的链（有行的链）。必须覆盖所有「当前用户是 owner、变更仍适用、且没有同一变更在进行」的链（`required_group_wallets`），否则返回 `group_required` 和缺的 `chain_ids`。`propose_multisig_tx` 对配置类交易同样检查，因此单链只能在其他链都已生效时发起（例如重提某条链上失败的交易）。
 - 同一变更已在某链进行中时拒绝重复发起（`change_already_pending`）。
 - 各链独立签名（SafeOp 哈希含 chainId）、独立执行与确认，失败单链重试不回滚。详情页「所有链」卡片提供「为所有链签名」「执行所有就绪的链」，输入一次支付码后逐链处理并汇总结果。
 - 撤回（`withdraw_multisig_tx`）会一并撤回同组其他链上尚无人签名的交易。

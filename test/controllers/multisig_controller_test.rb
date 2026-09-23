@@ -82,21 +82,45 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ legacy.id ], Wallet.find(body["wallets"].first["id"]).multisig_siblings.pluck(:id)
   end
 
-  test "add_multisig_wallet_chains builds new rows from the initial config, not current owners" do
+  test "add_multisig_wallet_chains enables other chains with the initial config" do
     wallets = create_wallet(chain_ids: [ 10 ])
     op = Wallet.find(wallets.first["id"])
-    # OP 上已经加了 Carol、门限改成 1（链上配置和初始配置分叉）
-    WalletOwner.create!(wallet: op, owner_address: CAROL, position: 2)
-    op.update!(threshold: 1)
 
-    post "/add_multisig_wallet_chains", params: { wallet_id: op.id, chain_ids: [ 42161, 1, 10 ] }, headers: auth, as: :json
+    # 任一 owner 都可以启用
+    post "/add_multisig_wallet_chains", params: { wallet_id: op.id, chain_ids: [ 42161, 10 ] }, headers: auth(@bob_token), as: :json
     assert_response :success, @response.body
     created = body["wallets"]
-    assert_equal [ 42161, 1 ], created.map { |w| w["chain_id"] }
+    assert_equal [ 42161 ], created.map { |w| w["chain_id"] }
 
     arb = Wallet.find(created.first["id"])
     assert_equal [ ALICE, BOB ], arb.owner_address_list.sort
     assert_equal 2, arb.threshold
+  end
+
+  test "add_multisig_wallet_chains is refused once members or threshold changed" do
+    wallets = create_wallet(chain_ids: [ 10 ])
+    op = Wallet.find(wallets.first["id"])
+    # OP 上已经加了 Carol、门限改成 1（新链上生效的会是旧成员）
+    WalletOwner.create!(wallet: op, owner_address: CAROL, position: 2)
+    op.update!(threshold: 1)
+
+    post "/add_multisig_wallet_chains", params: { wallet_id: op.id, chain_ids: [ 42161 ] }, headers: auth, as: :json
+    assert_response :bad_request
+    assert_equal "config_changed", body["code"]
+    assert_equal 1, Wallet.multisig_at(SAFE).count
+  end
+
+  test "add_multisig_wallet_chains is refused while a member change is pending" do
+    wallets = create_wallet(chain_ids: [ 10 ])
+    post "/propose_multisig_tx", params: {
+      wallet_id: wallets.first["id"], tx_type: "change_threshold",
+      call_detail: { new_threshold: 1 }, evm_call_data: CHANGE_THRESHOLD_DATA
+    }, headers: auth, as: :json
+    assert_response :success, @response.body
+
+    post "/add_multisig_wallet_chains", params: { wallet_id: wallets.first["id"], chain_ids: [ 1 ] }, headers: auth, as: :json
+    assert_response :bad_request
+    assert_equal "config_change_pending", body["code"]
   end
 
   test "owner change on one chain is refused while other chains apply" do
