@@ -518,8 +518,10 @@ class MultisigController < ApplicationController
 
     raise AppError.new("Transaction is not ready to execute") unless tx.status == "ready"
 
-    # 原子更新：防止并发重复执行
-    updated = MultisigTransaction.where(id: tx.id, status: "ready").update_all(status: "executing")
+    # 原子更新：防止并发重复执行。记下是谁锁的（reset 时本人可立即解锁），
+    # update_all 不会自动刷新 updated_at，要手动写，否则 reset 的 5 分钟保护按的是旧时间
+    updated = MultisigTransaction.where(id: tx.id, status: "ready")
+                                 .update_all(status: "executing", executor_id: current_user.id, updated_at: Time.current)
     raise AppError.new("Transaction is no longer ready to execute") unless updated > 0
 
     render json: {
@@ -615,7 +617,11 @@ class MultisigController < ApplicationController
 
     raise AppError.new("Transaction is being confirmed, cannot reset") if tx.status == "confirming"
     raise AppError.new("Transaction is not in executing state") unless tx.status == "executing"
-    raise AppError.new("Transaction is still being executed, please wait a few minutes") unless tx.updated_at < 5.minutes.ago
+    # 锁定者本人可以立即解锁（bundler 当场拒收、交易没上链时由前端调用）；
+    # 其他人要等 5 分钟，免得在别人执行到一半时把状态改回去
+    unless tx.executor_id == current_user.id || tx.updated_at < 5.minutes.ago
+      raise AppError.new("Transaction is still being executed, please wait a few minutes")
+    end
 
     tx.update!(status: "ready")
     render json: { result: "ok" }

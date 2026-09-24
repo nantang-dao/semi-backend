@@ -217,4 +217,28 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
     assert_nil body["tx"]["group_id"]
     assert_equal 10, body["tx"]["chain_id"]
   end
+  test "the owner who locked a tx can release it immediately, others must wait" do
+    wallets = create_wallet(chain_ids: [ 10 ])
+    wallet = Wallet.find(wallets.first["id"])
+    tx = MultisigTransaction.create!(
+      wallet: wallet, proposer: @alice, chain_id: 10, queue_position: 1, tx_type: "change_threshold",
+      call_detail: { new_threshold: 1 }, evm_call_data: CHANGE_THRESHOLD_DATA, threshold_at_creation: 2,
+      status: "ready", expires_at: 5.days.from_now, updated_at: 1.hour.ago
+    )
+
+    post "/execute_multisig_tx", params: { multisig_tx_id: tx.id }, headers: auth, as: :json
+    assert_response :success, @response.body
+    tx.reload
+    assert_equal "executing", tx.status
+    assert_equal @alice.id, tx.executor_id
+    assert_operator tx.updated_at, :>, 1.minute.ago
+
+    # 别人刚锁的交易，5 分钟内不能改回去
+    post "/reset_executing_multisig_tx", params: { multisig_tx_id: tx.id }, headers: auth(@bob_token), as: :json
+    assert_response :bad_request
+
+    post "/reset_executing_multisig_tx", params: { multisig_tx_id: tx.id }, headers: auth, as: :json
+    assert_response :success, @response.body
+    assert_equal "ready", tx.reload.status
+  end
 end
