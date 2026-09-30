@@ -21,7 +21,6 @@ Rails.application.routes.draw do
   get  "remaining_free_transactions" => "home#remaining_free_transactions"
   get  "get_encrypted_keys" => "home#get_encrypted_keys"
   post "set_encrypted_keys" => "home#set_encrypted_keys"
-  post "set_evm_chain_address" => "home#set_evm_chain_address"
   get  "get_transactions" => "home#get_transactions"
   post "add_transaction" => "home#add_transaction"
   post "add_transaction_with_gas_credits" => "home#add_transaction_with_gas_credits"

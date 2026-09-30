@@ -4,6 +4,11 @@ class User < ApplicationRecord
   has_many :transactions
   has_many :handle_aliases
 
+  # 一把私钥、一个 Safe 地址只能属于一个账户（交易记录按地址匹配，多签按私钥地址识别 owner）。
+  # 数据库另有 LOWER(...) 唯一索引兜底并发。绑定时的持有证明见 WalletBinding。
+  validates :evm_chain_active_key, uniqueness: { case_sensitive: false }, allow_nil: true
+  validates :evm_chain_address, uniqueness: { case_sensitive: false }, allow_nil: true
+
   RENAME_COOLDOWN = 30.days
   ALIAS_RETENTION = 90.days
 

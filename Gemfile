@@ -57,3 +57,5 @@ group :development, :test do
 end
 
 gem "dockerfile-rails", ">= 1.7", group: :development
+
+gem "keccak", "~> 1.3"

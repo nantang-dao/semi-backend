@@ -163,6 +163,7 @@ GEM
       sshkit (>= 1.23.0, < 2.0)
       thor (~> 1.3)
       zeitwerk (>= 2.6.18, < 3.0)
+    keccak (1.3.3)
     language_server-protocol (3.17.0.5)
     lint_roller (1.1.0)
     llhttp-ffi (0.5.1)
@@ -401,6 +402,7 @@ DEPENDENCIES
   dotenv-rails
   http
   kamal
+  keccak (~> 1.3)
   pg (~> 1.1)
   puma (>= 5.0)
   rack-cors

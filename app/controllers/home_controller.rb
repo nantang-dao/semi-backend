@@ -204,21 +204,32 @@ class HomeController < ApplicationController
     render json: { result: "ok", encrypted_keys: user.encrypted_keys }
   end
 
+  # 首次绑定签名私钥、Safe 地址和加密 keystore。一个账户只能绑定一次，不能更换。
+  # 必须证明持有这把私钥，且 Safe 地址由它推出，见 WalletBinding。
   def set_encrypted_keys
     user = User.find_by(id: params[:id])
     raise AppError.new("User Not Found") unless user
     raise AppError.new("Invalid Auth Token") unless user == current_user
+    raise AppError.new("A signing key is already bound to this account", code: "key_already_bound") if user.evm_chain_active_key.present?
+    raise AppError.new("encrypted_keys is required") if params[:encrypted_keys].blank?
 
-    user.update(encrypted_keys: params[:encrypted_keys], evm_chain_address: params[:evm_chain_address], evm_chain_active_key: params[:evm_chain_active_key])
-    render json: { result: "ok" }
-  end
+    begin
+      WalletBinding.verify!(
+        user_id: user.id,
+        active_key: params[:evm_chain_active_key],
+        safe_address: params[:evm_chain_address],
+        public_key: params[:public_key],
+        signature: params[:signature]
+      )
+    rescue WalletBinding::InvalidProof => e
+      raise AppError.new(e.message, code: "invalid_key_proof")
+    end
 
-  def set_evm_chain_address
-    user = User.find_by(id: params[:id])
-    raise AppError.new("User Not Found") unless user
-    raise AppError.new("Invalid Auth Token") unless user == current_user
-
-    user.update(evm_chain_address: params[:evm_chain_address], evm_chain_active_key: params[:evm_chain_active_key])
+    begin
+      user.update!(encrypted_keys: params[:encrypted_keys], evm_chain_address: params[:evm_chain_address], evm_chain_active_key: params[:evm_chain_active_key])
+    rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique
+      raise AppError.new("This signing key is already bound to another account", code: "key_in_use")
+    end
     render json: { result: "ok" }
   end
 

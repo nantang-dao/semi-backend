@@ -136,11 +136,56 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert JSON.parse(@response.body).key?("result")
   end
 
-  test "should set encrypted keys" do
+  test "should set encrypted keys with proof of key ownership" do
     user = User.create(phone: "1234567890")
-    post set_encrypted_keys_url, params: { id: user.id, encrypted_keys: "encrypted_data" }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    key = EvmTestKey.new
+    post set_encrypted_keys_url, params: key.binding_params(user), headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    assert_response :success, @response.body
+    user.reload
+    assert_equal key.address, user.evm_chain_active_key.downcase
+    assert_equal key.safe_address, user.evm_chain_address.downcase
+  end
+
+  test "a bound key cannot be replaced" do
+    user = User.create(phone: "1234567890")
+    auth = { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    post set_encrypted_keys_url, params: EvmTestKey.new.binding_params(user), headers: auth
     assert_response :success
-    assert JSON.parse(@response.body).key?("result")
+
+    post set_encrypted_keys_url, params: EvmTestKey.new.binding_params(user), headers: auth
+    assert_response :bad_request
+    assert_equal "key_already_bound", JSON.parse(@response.body)["code"]
+  end
+
+  test "binding without proof, or claiming someone else's key or Safe, is refused" do
+    victim = EvmTestKey.new
+    user = User.create(phone: "1234567890")
+    auth = { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    mine = EvmTestKey.new
+
+    [
+      { id: user.id, encrypted_keys: "x", evm_chain_active_key: victim.address, evm_chain_address: victim.safe_address },
+      mine.binding_params(user).merge(evm_chain_active_key: victim.address),
+      mine.binding_params(user).merge(evm_chain_address: victim.safe_address),
+      # 签名是给别的账户签的
+      mine.binding_params(User.create(phone: "1999")).merge(id: user.id)
+    ].each do |params|
+      post set_encrypted_keys_url, params: params, headers: auth
+      assert_response :bad_request
+      assert_equal "invalid_key_proof", JSON.parse(@response.body)["code"], params.inspect
+    end
+    assert_nil user.reload.evm_chain_active_key
+  end
+
+  test "one key can be bound to only one account" do
+    key = EvmTestKey.new
+    first = User.create(phone: "1234567890")
+    User.where(id: first.id).update_all(evm_chain_active_key: key.address.upcase.sub("0X", "0x"), evm_chain_address: key.safe_address)
+
+    second = User.create(phone: "1234567891")
+    post set_encrypted_keys_url, params: key.binding_params(second), headers: { "Authorization" => "Bearer #{second.gen_auth_token}" }
+    assert_response :bad_request
+    assert_equal "key_in_use", JSON.parse(@response.body)["code"]
   end
 
   test "should get encrypted keys" do
@@ -151,11 +196,12 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert JSON.parse(@response.body).key?("encrypted_keys")
   end
 
-  test "should set evm chain address" do
+  test "set_evm_chain_address is gone" do
     user = User.create(phone: "1234567890")
-    post set_evm_chain_address_url, params: { id: user.id, evm_chain_address: "0x1234567890", evm_chain_active_key: "0x1234567890" }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
-    assert_response :success
-    assert JSON.parse(@response.body).key?("result")
+    post "/set_evm_chain_address", params: { id: user.id, evm_chain_address: "0x1234567890", evm_chain_active_key: "0x1234567890" },
+                                   headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    assert_response :not_found
+    assert_nil user.reload.evm_chain_active_key
   end
 
   test "should get user" do
