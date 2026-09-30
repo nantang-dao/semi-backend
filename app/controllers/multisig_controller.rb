@@ -455,7 +455,7 @@ class MultisigController < ApplicationController
     raise AppError.new("Signer address must match your wallet address") unless signer_address == user_active_key
 
     raise AppError.new("Signer is not an owner of this wallet") unless wallet_owner_addresses(wallet).include?(signer_address)
-    raise AppError.new("Invalid signature") if signature.blank?
+    raise AppError.new("Invalid signature", code: "invalid_signature") if signature.blank?
 
     MultisigSignature.find_by(multisig_transaction_id: tx.id, signer_address: signer_address)&.tap do
       raise AppError.new("Already signed")
@@ -493,6 +493,10 @@ class MultisigController < ApplicationController
       elsif tx.competing_replacement? && tx.user_op_snapshot.blank?
         raise AppError.new("Rejection transaction is missing user_op_snapshot")
       end
+
+      # 签名必须是 signer 对这份快照的 SafeOp 哈希签的，否则执行时整笔被 bundler 拒（AA24）。
+      # 常见原因：页面在第一个人上传快照之前打开，自己建了一份快照来签（生产上有 2 笔这样失败）。
+      verify_snapshot_signature!(tx.user_op_snapshot, signer_address, signature)
 
       MultisigSignature.create!(
         multisig_transaction_id: tx.id,
@@ -537,8 +541,13 @@ class MultisigController < ApplicationController
   end
 
   # POST /confirm_multisig_tx
-  # params: multisig_tx_id, tx_hash, gas_used, user_op_hash（可选，用于精确定位 UserOp）
+  # params: multisig_tx_id, tx_hash, gas_used（user_op_hash 旧客户端会传，忽略）
   # Called by frontend after successful on-chain execution
+  #
+  # 回执里必须有「这笔交易快照」的 UserOperationEvent：哈希由后端从快照算，不用前端
+  # 传的。哈希覆盖 sender、nonce、callData 等全部字段，同一 nonce 在链上只能成功一次，
+  # 所以旧回执、同 nonce 的竞争交易的回执都确认不了它。曾经 user_op_hash 可选且不核对，
+  # 拿同一 Safe 任意一笔旧回执就能把没上链的 owner 变更标成已执行。
   def confirm_tx
     tx = MultisigTransaction.find_by(id: params[:multisig_tx_id])
     raise AppError.new("Transaction not found") unless tx
@@ -555,7 +564,13 @@ class MultisigController < ApplicationController
     # 防止伪造/复用无关 tx_hash 把交易标记为已执行。校验在状态推进之前进行，失败时交易
     # 仍停留在 executing（可由 reset_executing_tx 或前端重试恢复），不会卡在 confirming。
     chain_id = wallet.chain_id || wallet.chain.to_i
-    verify_userop_receipt!(tx_hash, chain_id, wallet.evm_chain_address, params[:user_op_hash])
+    raise AppError.new("Transaction has no snapshot", code: "receipt_mismatch") if tx.user_op_snapshot.blank?
+    begin
+      expected_user_op_hash = SafeOp.user_op_hash(tx.user_op_snapshot)
+    rescue SafeOp::InvalidSnapshot => e
+      raise AppError.new("Invalid snapshot: #{e.message}", code: "receipt_mismatch")
+    end
+    verify_userop_receipt!(tx_hash, chain_id, wallet.evm_chain_address, expected_user_op_hash)
 
     # 校验通过后再原子推进状态：防止并发 confirm 导致 apply_wallet_config 执行两次
     updated = MultisigTransaction.where(id: tx.id, status: "executing").update_all(status: "confirming")
@@ -849,6 +864,22 @@ class MultisigController < ApplicationController
   # 当门限或 owner 集合变更后，重新评估该钱包所有活跃交易的 status
   # 签名数已达当前门限的 signing 交易应升级为 ready
   # 原为 ready 但签名数不再满足当前门限的应降为 signing
+  # 快照自带的 safeOpHash（新快照才有）必须等于重算值；签名恢复出的地址必须是 signer
+  def verify_snapshot_signature!(snapshot, signer_address, signature)
+    raise AppError.new("Transaction has no snapshot to sign", code: "invalid_signature") if snapshot.blank?
+
+    digest = SafeOp.safe_op_hash(snapshot)
+    recorded = snapshot.to_h.with_indifferent_access[:safeOpHash]
+    if recorded.present? && recorded.to_s.downcase != digest
+      raise AppError.new("Snapshot safeOpHash does not match its contents", code: "intent_mismatch")
+    end
+    return if SafeOp.recover_signer(digest, signature) == signer_address
+
+    raise AppError.new("Signature does not match the transaction snapshot, reload and sign again", code: "invalid_signature")
+  rescue SafeOp::InvalidSnapshot => e
+    raise AppError.new("Invalid snapshot: #{e.message}", code: "intent_mismatch")
+  end
+
   # 这条钱包行在它那条链上实际生效的 owners（小写、排序）和门限
   def effective_chain_config(wallet)
     safe_address = wallet.evm_chain_address
@@ -1029,7 +1060,7 @@ class MultisigController < ApplicationController
 
   # 失败闭合校验：链上必须存在该 tx_hash 的成功回执，且回执确实对应本 Safe 的 UserOp。
   # 任一条件不满足即抛错（不降级信任前端），从而阻止伪造/复用无关 tx_hash 的确认。
-  def verify_userop_receipt!(tx_hash, chain_id, safe_address, user_op_hash = nil)
+  def verify_userop_receipt!(tx_hash, chain_id, safe_address, user_op_hash)
     safe = safe_address.to_s.downcase
 
     # 容忍 RPC 节点同步延迟：短暂重试后仍读不到则失败闭合（让前端稍后重试）。

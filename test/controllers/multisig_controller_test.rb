@@ -2,9 +2,12 @@ require "test_helper"
 require "minitest/mock"
 
 class MultisigControllerTest < ActionDispatch::IntegrationTest
-  ALICE = "0x1111111111111111111111111111111111111111"
-  BOB = "0x2222222222222222222222222222222222222222"
-  CAROL = "0x3333333333333333333333333333333333333333"
+  # 后端会验签，ALICE / BOB 要有真私钥（Hardhat 测试账户 #2、#1）。保持 ALICE < BOB < CAROL
+  ALICE_KEY = EvmTestKey.new("0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a")
+  BOB_KEY = EvmTestKey.new("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
+  ALICE = ALICE_KEY.address
+  BOB = BOB_KEY.address
+  CAROL = "0xcccccccccccccccccccccccccccccccccccccccc"
   SAFE = "0x53d961df57ccd0da6e6d6eae3377d4ea5b3f273d"
 
   ADD_CAROL = { new_owner: CAROL, new_threshold: 2 }.freeze
@@ -222,9 +225,16 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
     assert_nil body["tx"]["group_id"]
     assert_equal 10, body["tx"]["chain_id"]
   end
-  def snapshot_for(to, value, data = "", nonce: "0", sender: SAFE, chain_id: 10)
-    { sender: sender, chainId: chain_id, nonce: nonce, callData: "0x" + MultisigIntent.encode_safe_call_data(to, value, data) }
+  def snapshot_for(to, value, data = "", nonce: "0", sender: SAFE, chain_id: 10, max_fee: "1000000")
+    {
+      sender: sender, chainId: chain_id, nonce: nonce, callData: "0x" + MultisigIntent.encode_safe_call_data(to, value, data),
+      callGasLimit: "100000", verificationGasLimit: "200000", preVerificationGas: "50000",
+      maxFeePerGas: max_fee, maxPriorityFeePerGas: "1000000", validAfter: 0, validUntil: 0,
+      initCode: "0x", paymasterAndData: "0x"
+    }
   end
+
+  def sign(key, snapshot) = key.sign_digest(SafeOp.safe_op_hash(snapshot))
 
   test "first signer's snapshot must execute exactly the proposed transaction" do
     wallets = create_wallet(chain_ids: [ 10 ])
@@ -248,11 +258,104 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
     end
     assert_equal "queued", MultisigTransaction.find(tx_id).status
 
+    snapshot = snapshot_for(CAROL, 10**16)
     post "/submit_multisig_signature", params: {
-      multisig_tx_id: tx_id, signer_address: ALICE, signature: "0xsig", nonce: "0", user_op_snapshot: snapshot_for(CAROL, 10**16)
+      multisig_tx_id: tx_id, signer_address: ALICE, signature: sign(ALICE_KEY, snapshot), nonce: "0", user_op_snapshot: snapshot
     }, headers: auth, as: :json
     assert_response :success, @response.body
     assert_equal "signing", body["tx"]["status"]
+  end
+
+  def proposed_transfer
+    wallets = create_wallet(chain_ids: [ 10 ])
+    post "/propose_multisig_tx", params: {
+      wallet_id: wallets.first["id"], tx_type: "transfer", call_detail: { to: CAROL, amount: "0.01" }, evm_call_data: "0x"
+    }, headers: auth, as: :json
+    body["tx"]["id"]
+  end
+
+  test "signatures must recover to the signer over the stored snapshot" do
+    tx_id = proposed_transfer
+    snapshot = snapshot_for(CAROL, 10**16)
+
+    # 签名人和签的内容都对，但不是本人签的
+    post "/submit_multisig_signature", params: {
+      multisig_tx_id: tx_id, signer_address: ALICE, signature: sign(BOB_KEY, snapshot), nonce: "0", user_op_snapshot: snapshot
+    }, headers: auth, as: :json
+    assert_equal "invalid_signature", body["code"]
+    assert_equal "queued", MultisigTransaction.find(tx_id).status
+
+    post "/submit_multisig_signature", params: {
+      multisig_tx_id: tx_id, signer_address: ALICE, signature: sign(ALICE_KEY, snapshot), nonce: "0", user_op_snapshot: snapshot
+    }, headers: auth, as: :json
+    assert_response :success, @response.body
+
+    # 生产上出现过的竞态：Bob 在 Alice 上传快照前打开页面，自己建了一份（gas 价不同）来签
+    own = snapshot_for(CAROL, 10**16, max_fee: "2000000")
+    post "/submit_multisig_signature", params: {
+      multisig_tx_id: tx_id, signer_address: BOB, signature: sign(BOB_KEY, own), nonce: "0", user_op_snapshot: own
+    }, headers: auth(@bob_token), as: :json
+    assert_equal "invalid_signature", body["code"]
+    assert_equal 1, MultisigSignature.where(multisig_transaction_id: tx_id).count
+
+    post "/submit_multisig_signature", params: {
+      multisig_tx_id: tx_id, signer_address: BOB, signature: sign(BOB_KEY, snapshot)
+    }, headers: auth(@bob_token), as: :json
+    assert_response :success, @response.body
+    assert_equal "ready", body["tx"]["status"]
+  end
+
+  test "a snapshot whose recorded safeOpHash disagrees with its contents is refused" do
+    tx_id = proposed_transfer
+    snapshot = snapshot_for(CAROL, 10**16).merge(safeOpHash: "0x" + "ab" * 32)
+    post "/submit_multisig_signature", params: {
+      multisig_tx_id: tx_id, signer_address: ALICE, signature: sign(ALICE_KEY, snapshot), nonce: "0", user_op_snapshot: snapshot
+    }, headers: auth, as: :json
+    assert_equal "intent_mismatch", body["code"]
+  end
+
+  def user_op_event(user_op_hash, success: true)
+    word = ->(n) { n.to_s(16).rjust(64, "0") }
+    {
+      "address" => SafeOp::ENTRY_POINT,
+      "topics" => [ UserOpReceipt::EVENT_TOPIC, user_op_hash, "0x" + "0" * 24 + SAFE.delete_prefix("0x"), "0x" + "0" * 64 ],
+      "data" => "0x" + word.(0) + word.(success ? 1 : 0) + word.(1234) + word.(99)
+    }
+  end
+
+  def receipt(*logs) = { "status" => "0x1", "to" => SafeOp::ENTRY_POINT, "logs" => logs }
+
+  test "confirm requires the receipt of this transaction's own UserOp" do
+    wallets = create_wallet(chain_ids: [ 10 ])
+    wallet = Wallet.find(wallets.first["id"])
+    snapshot = snapshot_for(SAFE, 0, call_data("change_threshold", THRESHOLD_1).delete_prefix("0x"), nonce: "7")
+    tx = MultisigTransaction.create!(
+      wallet: wallet, proposer: @alice, chain_id: 10, queue_position: 1, tx_type: "change_threshold", nonce: "7",
+      call_detail: THRESHOLD_1, evm_call_data: call_data("change_threshold", THRESHOLD_1), threshold_at_creation: 2,
+      status: "executing", executor_id: @alice.id, user_op_snapshot: snapshot, expires_at: 5.days.from_now
+    )
+    confirm = ->(rcpt, **extra) {
+      ChainRpc.stub(:get_transaction_receipt, rcpt) do
+        post "/confirm_multisig_tx", params: { multisig_tx_id: tx.id, tx_hash: "0x" + "12" * 32, **extra }, headers: auth, as: :json
+      end
+    }
+
+    # 同一 Safe 另一笔（比如以前的）成功 UserOp 的回执，前端还声称就是它
+    old_hash = "0x" + "ee" * 32
+    confirm.call(receipt(user_op_event(old_hash)), user_op_hash: old_hash)
+    assert_response :bad_request
+    assert_match(/找不到这笔交易的 UserOp/, body["message"])
+    assert_equal "executing", tx.reload.status
+    assert_equal 2, wallet.reload.threshold
+
+    confirm.call(receipt(user_op_event(SafeOp.user_op_hash(snapshot), success: false)))
+    assert_match(/内层调用回滚/, body["message"])
+    assert_equal "executing", tx.reload.status
+
+    confirm.call(receipt(user_op_event(old_hash), user_op_event(SafeOp.user_op_hash(snapshot))))
+    assert_response :success, @response.body
+    assert_equal "executed", tx.reload.status
+    assert_equal 1, wallet.reload.threshold
   end
 
   test "rejection snapshot must be an empty self-call at the target nonce" do

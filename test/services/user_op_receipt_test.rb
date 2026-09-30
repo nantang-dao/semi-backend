@@ -18,30 +18,34 @@ class UserOpReceiptTest < ActiveSupport::TestCase
 
   test "成功的 UserOp 放行" do
     assert_nothing_raised do
-      UserOpReceipt.assert_succeeded!([ event(sender: SAFE, success: true) ], SAFE)
+      UserOpReceipt.assert_succeeded!([ event(sender: SAFE, success: true) ], SAFE, OP_HASH)
     end
   end
 
   # 这一条就是那个洞：不查 success 位，这笔会被标记成 executed
   test "内层回滚的 UserOp 被拒绝" do
     err = assert_raises(UserOpReceipt::Reverted) do
-      UserOpReceipt.assert_succeeded!([ event(sender: SAFE, success: false) ], SAFE)
+      UserOpReceipt.assert_succeeded!([ event(sender: SAFE, success: false) ], SAFE, OP_HASH)
     end
     assert_match(/内层调用回滚/, err.message)
   end
 
   test "别的 Safe 的成功事件不算数" do
     assert_raises(UserOpReceipt::NotFound) do
-      UserOpReceipt.assert_succeeded!([ event(sender: OTHER, success: true) ], SAFE)
+      UserOpReceipt.assert_succeeded!([ event(sender: OTHER, success: true) ], SAFE, OP_HASH)
     end
   end
 
   test "同一 bundle 里别人成功、自己失败时拒绝" do
     logs = [ event(sender: OTHER, success: true), event(sender: SAFE, success: false) ]
-    assert_raises(UserOpReceipt::Reverted) { UserOpReceipt.assert_succeeded!(logs, SAFE) }
+    assert_raises(UserOpReceipt::Reverted) { UserOpReceipt.assert_succeeded!(logs, SAFE, OP_HASH) }
   end
 
-  test "给了 user_op_hash 时只看自己那一笔" do
+  test "user_op_hash 必填" do
+    assert_raises(ArgumentError) { UserOpReceipt.assert_succeeded!([ event(sender: SAFE, success: true) ], SAFE, nil) }
+  end
+
+  test "只看自己那一笔" do
     mine = event(sender: SAFE, success: true, op_hash: "0x#{'cd' * 32}")
     theirs = event(sender: SAFE, success: false, op_hash: "0x#{'ef' * 32}")
     assert_nothing_raised do
@@ -61,12 +65,12 @@ class UserOpReceiptTest < ActiveSupport::TestCase
   # 失败闭合：看不懂的回执不该被判成成功
   test "没有 UserOperationEvent 时拒绝" do
     assert_raises(UserOpReceipt::NotFound) do
-      UserOpReceipt.assert_succeeded!([ { "topics" => [ "0xdead" ], "data" => "0x" } ], SAFE)
+      UserOpReceipt.assert_succeeded!([ { "topics" => [ "0xdead" ], "data" => "0x" } ], SAFE, OP_HASH)
     end
   end
 
   test "data 太短读不出 success 时当作失败" do
     short = { "topics" => [ UserOpReceipt::EVENT_TOPIC, OP_HASH, SAFE, "0x0" ], "data" => "0x#{word(5)}" }
-    assert_raises(UserOpReceipt::Reverted) { UserOpReceipt.assert_succeeded!([ short ], SAFE) }
+    assert_raises(UserOpReceipt::Reverted) { UserOpReceipt.assert_succeeded!([ short ], SAFE, OP_HASH) }
   end
 end

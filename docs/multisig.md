@@ -69,12 +69,15 @@
 
 gas / paymaster 字段不在核对范围内。ERC20 的 `symbol` 是提案人填的，详情页同时显示代币合约地址，以地址为准。
 
+签名本身也在后端核对（`submit_multisig_signature`，`SafeOp`）：后端从快照算出 SafeOp EIP-712 哈希（domain 为 chainId + Safe4337Module），用签名恢复出地址，必须等于 `signer_address`，否则 `invalid_signature`；快照自带的 `safeOpHash` 必须等于重算值（`intent_mismatch`）。只接受 v = 27/28 的普通 ECDSA 签名。前端碰到 `invalid_signature` 且签的是自己建的快照时，取回已存的快照核对后重签一次。
+
 ## 执行与失败
 
 执行逻辑只有一份：`semi-app/utils/multisig_execute.ts`，详情页和队列页都调用它（以前两页各写一套，队列页漏了余额检查）。
 
 - 锁定前先查余额：自付 gas 的链按 gas 上限 × `maxFeePerGas` 预付，转账再加上转出金额；不够就直接提示，不锁定。
 - `execute_multisig_tx` 把交易锁成 `executing`，同时记 `executor_id` 和 `updated_at`。
+- `confirm_multisig_tx`：后端从快照算 EntryPoint v0.7 的 userOpHash（`SafeOp.user_op_hash`，字段与 `execute.ts` 提交的一致），回执里必须有这个哈希的、`success` 为真的 `UserOperationEvent`。前端传的 `user_op_hash` 不再使用。
 - bundler 当场拒收、交易没上链，并且换个时机可能成功（出价低于 bundler 最低价、AA21 预付不足）：锁定者调用 `reset_executing_multisig_tx` 立即退回 `ready`（其他人仍需等 5 分钟），提示原因。
 - 同一份快照永远不可能成功（AA24 签名、AA25 nonce、快照过期、上链后调用回滚）：`fail_multisig_tx`，需要重新发起。
 - 已提交但等回执超时：保持 `executing`，不能当失败（可能仍会上链，当失败会诱导重复发起）。
@@ -120,18 +123,6 @@ gas / paymaster 字段不在核对范围内。ERC20 的 `symbol` 是提案人填
 
 保留：`0xab7b…` 的 Arbitrum 行（核对时已有 2 笔多签交易）和主网行（地址上有 0.0001 ETH，有人在测试）；`0xc0cf…` 的 Arbitrum、主网行（都有交易，主网已部署）。被删行的钱包之后仍可手动启用；`0x7ea2…` 成员变更过，按新规则不能再启用新链。
 
-### 2026-10：`sync_multisig_wallet` 采信前端数据
-
-**问题**：`ChainRpc.eth_call` 在已带 `0x` 的选择器前又拼了一次 `0x`，发出去的是 `0x0xa0e67e2b`，调用一直失败、返回空；空结果被当成「读不到」，降级为信任前端传来的 owners / threshold。即使 RPC 正常，`sync_wallet` 里的 `rescue => e` 也会把「与链上不一致」的 `AppError` 一并吞掉。结果：任一 owner 都能把后端镜像改成任意成员和门限——把自己的其他地址加进来看交易和成员手机号、把别人踢出列表、把门限调低让交易显示「可执行」（链上资金不受影响，签名不够 bundler 会拒）。降级逻辑是 `249ba92`（2026-06-04）加的，`0x0x` 从 `ChainRpc` 诞生起就在。由 2026-10 的安全审计发现。
-
-**修正**（2026-10-01）：
-
-- `ChainRpc`：去掉重复前缀；节点返回 `error`、没有响应、返回值读不懂都抛 `ChainRpc::Error`，不再返回空值；新增 `deployed?`（`eth_getCode`）。`get_transaction_receipt` 仍在失败时返回 nil，由 `confirm_tx` 重试后失败闭合。
-- `sync_wallet` 由后端读链决定写入什么，规则见上面「新 owner 如何看到钱包」。owners 页的手动同步不再在前端读链。
-- 测试用一个假的 JSON-RPC 节点，calldata 不对就报错，锁住 `0x0x` 这类问题。
-
-**生产核对**（2026-10-01，只读）：用修好的 `ChainRpc` 核对全部 15 个多签钱包行，镜像与生效配置全部一致（7 行读链上合约，8 行未部署、按初始配置），没有被改写过的迹象。
-
 ### 2026-10：签名前核对快照内容（修复盲签）
 
 **原设计**：第一个签名人按 `call_detail` 建快照（`user_op_snapshot`），和签名一起上传；后端原样保存。后面的签名人取回快照直接签，只做哈希自洽检查（`safeOpHash`），`expectedHash` 从未传入。拒签提案的快照由提案人上传，后端只核对 nonce。配置类交易（owner / 门限变更）后端只核对 calldata 的函数选择器。多签转账可以在 `call_detail.remark_to` / `remark_data` 里附带一个 remark 上链调用，签名时原样拼到调用列表里。
@@ -159,3 +150,36 @@ gas / paymaster 字段不在核对范围内。ERC20 的 `symbol` 是提案人填
 - 前后端的编码是两份实现，用 semi-core 生成的同一组向量锁住（`semi-core/test/snapshot-intent.test.ts`、`semi-backend/test/services/multisig_intent_test.rb`）。
 
 **有意不做**：gas / paymaster 字段（`maxFeePerGas`、各 gas 上限、`paymasterAndData`）不核对。它们决定谁付费、付多少，不改变 Safe 执行什么。理论上，自付 gas 的链上，第一个签名人可以抬高 `maxFeePerGas`，再自己打包并把受益人设成自己，从 Safe 里多收手续费。评估后决定不防（2026-10-01）。以后如果要恢复多签 remark，只放行本链配置的代理地址 + `saveRemark`，页面显示解码后的备注，后端也要知道代理地址。
+
+### 2026-10：`sync_multisig_wallet` 采信前端数据
+
+**问题**：`ChainRpc.eth_call` 在已带 `0x` 的选择器前又拼了一次 `0x`，发出去的是 `0x0xa0e67e2b`，调用一直失败、返回空；空结果被当成「读不到」，降级为信任前端传来的 owners / threshold。即使 RPC 正常，`sync_wallet` 里的 `rescue => e` 也会把「与链上不一致」的 `AppError` 一并吞掉。结果：任一 owner 都能把后端镜像改成任意成员和门限——把自己的其他地址加进来看交易和成员手机号、把别人踢出列表、把门限调低让交易显示「可执行」（链上资金不受影响，签名不够 bundler 会拒）。降级逻辑是 `249ba92`（2026-06-04）加的，`0x0x` 从 `ChainRpc` 诞生起就在。由 2026-10 的安全审计发现。
+
+**修正**（2026-10-01）：
+
+- `ChainRpc`：去掉重复前缀；节点返回 `error`、没有响应、返回值读不懂都抛 `ChainRpc::Error`，不再返回空值；新增 `deployed?`（`eth_getCode`）。`get_transaction_receipt` 仍在失败时返回 nil，由 `confirm_tx` 重试后失败闭合。
+- `sync_wallet` 由后端读链决定写入什么，规则见上面「新 owner 如何看到钱包」。owners 页的手动同步不再在前端读链。
+- 测试用一个假的 JSON-RPC 节点，calldata 不对就报错，锁住 `0x0x` 这类问题。
+
+**生产核对**（2026-10-01，只读）：用修好的 `ChainRpc` 核对全部 15 个多签钱包行，镜像与生效配置全部一致（7 行读链上合约，8 行未部署、按初始配置），没有被改写过的迹象。
+
+### 2026-10：`confirm_tx` 可用旧回执确认；后端不验多签签名
+
+**问题**：
+
+1. `confirm_multisig_tx` 的 `user_op_hash` 是可选参数，缺省时回执里只要有本 Safe 的任意一个成功 `UserOperationEvent` 就放行；给了也不核对它是不是这笔交易的哈希。一笔已经签够、但故意不上链的 owner 变更，可以拿同一 Safe 以前任意一笔成功交易的回执确认：后端标成 executed、按 `call_detail` 改成员和门限、把同 nonce 的交易标成 superseded、推进队列，而链上什么也没变。
+2. `submit_multisig_signature` 只检查签名非空。签名人地址已绑定到当前用户（见 `auth.md`），不能冒签，但一个 owner 可以交一段乱码占掉自己的名额，让交易显示「可执行」，执行时才被 bundler 以 AA24 拒绝，且签名删不掉，只能重新发起。
+
+由 2026-10 的安全审计发现（Claude 在审计会话中）。
+
+**修正**（2026-10-01）：
+
+- 新增 `SafeOp`（`app/services/safe_op.rb`）：从快照算 SafeOp 哈希和 userOpHash，从签名恢复地址（OpenSSL 椭圆曲线点运算，不引入依赖系统 secp256k1 库的 gem）。算法由 viem 生成的向量锁住（`test/fixtures/files/safe_op_vectors.json`，一份带 factory + paymaster，一份不带）。
+- `confirm_tx` 用后端算的 userOpHash，`UserOpReceipt.assert_succeeded!` 的哈希改为必填。哈希覆盖 nonce 和 callData，同一 nonce 链上只能成功一次，所以只有这笔交易自己那次执行的回执能确认它。
+- `submit_signature` 验签，规则见上面「待签内容必须等于展示内容」。
+
+**生产核对**（2026-10-01，只读，用新代码跑生产数据）：
+
+- 22 笔已执行的多签交易，链上回执里全部有后端从快照算出的 userOpHash——算法和链上一致，新规则不会误拒正常确认。
+- 18 份带 `safeOpHash` 的快照，重算值全部一致。
+- 86 个已存签名中 84 个恢复出的地址正确。另 2 个（`3mtohod3xscak` 2026-08-22、`3mw6wrttrvctv` 2026-09-23，都是 OP 上的转账，最终 failed）恢复出的地址不属于任何用户，也不对应库里任何一份快照。两者都是第二个签名人、在第一个人签名后 4～6 秒提交：打开页面时交易还没有快照，前端自己建了一份（gas 价不同）来签，而后端已存了第一个人的快照，于是存下了一个签的是另一份快照的签名，执行时整笔失败。新规则会当场拒收这种签名，前端取回已存快照重签。
