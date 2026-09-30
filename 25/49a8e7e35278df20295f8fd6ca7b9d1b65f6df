@@ -1,0 +1,29 @@
+app/services/multisig_intent.rb
+  s_21c523732de41d::t_f28edd525884b5 1-43,45-181
+  s_21c523732de41d::t_3858ae0aa220d3 44
+test/services/multisig_intent_test.rb
+  s_21c523732de41d::t_7f76682f0c3c80 1-2,5-23,25-112
+  s_21c523732de41d::t_802e5116b7a62c 24
+  s_21c523732de41d::t_7f129199d49068 3-4
+test/controllers/multisig_controller_test.rb
+  s_21c523732de41d::t_b2a5fcfb7b045c 9-16,121,134,144,156,165,178,183,191,199,297
+  s_21c523732de41d::t_b1cdc245bd762e 224-291
+app/controllers/multisig_controller.rb
+  s_21c523732de41d::t_100be78f10559f 240-241,306-317,369,489-499,757
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2549a8e7e35278df20295f8fd6ca7b9d1b65f6df",
+  "prompts": {},
+  "sessions": {
+    "s_21c523732de41d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7cce0af7-aa66-434c-92bc-b50481bff78b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
