@@ -1,0 +1,22 @@
+docs/auth.md
+  s_21c523732de41d::t_066ab26412ce26 45-65
+docs/security-audit-2026-10.md
+  s_21c523732de41d::t_066ab26412ce26 16
+  s_21c523732de41d::t_cda52e6d03f238 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a1ed9db1f8f4a9cde2cdb45e41912e10be75ada7",
+  "prompts": {},
+  "sessions": {
+    "s_21c523732de41d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7cce0af7-aa66-434c-92bc-b50481bff78b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
