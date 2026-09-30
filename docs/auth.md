@@ -42,6 +42,27 @@
 - 应用仍由开发者自行上线，而且**新应用默认就是 `active`**：之前默认 `draft`，开发者不知道要手动上线。攻击面在于回调协议，不在于谁能上线。
 - 生产核查：现有 16 个应用的回调地址都符合新规则。其中 `CCTI` 用的是公网 IP 上的 `http://`，为兼容保留了 `http`；授权码经 PKCE 保护，截获授权码也换不到 token。
 
+### 2026-10：签名私钥与 Safe 地址可随意自报
+
+- 问题：`set_encrypted_keys` / `set_evm_chain_address` 原样保存前端报上来的 `evm_chain_active_key` 和 `evm_chain_address`，不要求证明持有私钥，也没有唯一约束。交易记录按地址匹配，多签按 `evm_chain_active_key` 识别 owner，所以把别人的地址报成自己的，就能读别人的交易记录、在多签里冒充成员。
+- 修复（2026-10-01，semi-backend `95502b2`、semi-app `4228ffe`）：
+  - 绑定时必须证明持有私钥：对 `Semi: bind signing key <key> and wallet <safe> to account <id>` 的 personal_sign，连同公钥上传；后端用 OpenSSL 验签、keccak 核对公钥对应的地址（`WalletBinding`）。消息里带账户 id，签名不能挪给别的账户用。
+  - Safe 地址必须由这把私钥推出（单 owner、门限 1、saltNonce 0），后端按 semi-core 生成的模板复算 CREATE2 地址。
+  - 一个账户只能绑定一次，不能更换（`key_already_bound`）；一把私钥、一个 Safe 地址只能属于一个账户（`key_in_use`，模型校验 + `LOWER(...)` 唯一索引）。
+  - 删除 `set_evm_chain_address`（前端从未调用）。
+  - 后端新增 `keccak` gem（C 扩展，无系统依赖）。
+- 生产数据（2026-10-01）：
+  - 用新的推导规则核对 266 对已绑定的私钥 / 地址：264 对吻合；2 对（`3lqfjbgrkrf25`、`3lqfpr7kw5p3v`，2025-05-30 注册）不吻合，地址在三条链上都未部署、余额为 0，也不属于任何其他账户，判断是当时的推导参数不同，保持原样。
+  - 有 2 组账户共用同一把私钥（同一个人把私钥导入了多个账户，账户各自发过交易、keystore 各不相同）。经确认后在一个事务里处理，操作前备份了受影响的行：
+    - `TT2732`（邮箱登录）并入 `TT0527`（手机号登录）：邮箱移到 `TT0527`，删除 `TT2732` 及其 2 个登录 token（它没有其他数据）。
+    - `zouzou`、`zcjtest`、`zou007` 共用一把：保留 `zouzou`，`zcjtest` 的 10 条交易记录转给 `zouzou`；`zcjtest`、`zou007` 清空私钥 / 地址 / keystore，账户保留，下次登录重新设置支付码（新私钥、新地址）。三个账户是三个手机号，一个用户只能存一个手机号，所以无法合并登录方式。
+- **部署前**：唯一索引的 migration（`20261001000003`）在新容器启动时执行，旧代码上线期间仍可能写进新的重复，有重复则新容器起不来。部署前先跑（结果应为空）：
+
+  ```sql
+  SELECT lower(evm_chain_active_key), count(*) FROM users WHERE evm_chain_active_key IS NOT NULL GROUP BY 1 HAVING count(*) > 1;
+  SELECT lower(evm_chain_address), count(*) FROM users WHERE evm_chain_address IS NOT NULL GROUP BY 1 HAVING count(*) > 1;
+  ```
+
 ## 未修的问题
 
 审计发现、还没修的认证相关问题（验证码限流、地址自报、令牌明文、6 位支付码等）统一记在 `security-audit-2026-10.md`，修了再挪到上面的变更记录。

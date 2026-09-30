@@ -13,6 +13,7 @@
 | 严重 | 前端把 6 位支付码当登录密码，发送不加盐的 `sha256(支付码)`（可还原支付码 → 解开 keystore）；`encrypted_password` 存的是它的 bcrypt | app `1027261`，backend `dfab4f0`（删列） | `auth.md` |
 | 严重 | 多签盲签：后面的签名人不核对快照与展示内容；配置类交易后端只查选择器；`remark_to` 附加调用页面不可见 | backend `2549a8e`，app `e257a43` | `multisig.md` 2026-10 |
 | 严重 | OAuth `redirect_uris` 可登记 `javascript:`，同意页跳转即在 semi.im 执行脚本 | backend `e228979`，app `3b2470c` | `auth.md` |
+| 严重 | `evm_chain_active_key` / `evm_chain_address` 可随意自报、无唯一约束（读别人交易记录、多签冒充成员） | backend `95502b2`，app `4228ffe`；生产重复数据已清理 | `auth.md` |
 
 以上均已核实，生产数据做过只读核查（见各设计文档）。截至 2026-10-01 **尚未部署**。
 
@@ -24,10 +25,6 @@
 
 ### 严重
 
-- **`evm_chain_address` / `evm_chain_active_key` 可随意自报**（代理报告）。`home_controller.rb` 的 `set_encrypted_keys`、`set_evm_chain_address` 不要求证明持有该地址，也没有唯一约束。
-  - 把自己的地址设成别人的，`get_transactions` 按地址匹配就能读到对方全部交易记录，`set_transaction_note` 能改对方作为收款方的备注。
-  - 多签按 `LOWER(evm_chain_active_key)` 识别 owner：设成某个 owner 的地址即可查看钱包、交易、成员手机号，冒名提案、撤回、`sync_wallet`；还能用对方地址提交一个垃圾签名占住签名位（「Already signed」），或抢先成为第一签名人（快照已有后端核对，见上）。
-  - 修法：设置时要求对服务端 nonce 的 `personal_sign` 并校验；给 `LOWER(evm_chain_active_key)` 加唯一索引。
 - **6 位支付码撑不住 keystore**（代理报告，`semi-core/src/keys/keystore.ts`）。PBKDF2-SHA256 10 万次，10⁶ 种组合，数据库或备份泄露后单个用户约 10 秒可穷举。salt 和 IV 存在服务器上是正常的，问题在口令熵。修法：引入服务器没有的熵（WebAuthn PRF / 设备密钥），或强制高熵口令 + Argon2id；至少不能只靠 6 位数字。
 
 ### 高
@@ -36,7 +33,7 @@
 - **Paymaster 押金可能被外人消耗**（待确认 ZeroDev 后台配置）。`VITE_ZERODEV_PROJECT_ID` 在客户端 bundle 里（已核实），paymaster 是 `selfFunded`。若 ZeroDev 后台没配 sponsor 策略（sender / 合约白名单、限额），任何人都能拿它为自己的 UserOp 付 gas。`gas_credits` 只是事后记账，不拦截。修法：先去控制台确认策略；更彻底是把 sponsor 放到服务端鉴权之后。
 - **`sync_wallet` 的链上校验实际失效**（已核实，`app/services/chain_rpc.rb`）。选择器常量已带 `0x`，`eth_call` 又拼一次，发出 `0x0xa0e67e2b`，调用失败后降级为信任前端传来的 owners / threshold。任一 owner 可改写后端镜像的成员列表和门限（链上资金不受影响）。修法：去掉重复前缀；失败时拒绝，不降级。
 - **`confirm_tx` 可以拿同一 Safe 的旧回执确认**（代理报告，`multisig_controller.rb` `confirm_tx`、`user_op_receipt.rb`）。`user_op_hash` 可选，也不核对回执里事件的 nonce，能把没执行的 owner 变更标成已执行，后端据此改成员和门限。修法：`user_op_hash` 必填并与快照重算值比对，核对 nonce，同一哈希只能确认一次。
-- **后端不验证多签签名**（代理报告，`submit_signature` 只查非空）。配合自报地址可以占签名位。修法：`ecrecover` 恢复出的地址必须等于 `signer_address`，签的是快照的 SafeOp 哈希。
+- **后端不验证多签签名**（代理报告，`submit_signature` 只查非空）。地址自报堵上之后（见已修复），只剩后端被攻破或绕过前端时的纵深防御价值。修法：`ecrecover` 恢复出的地址必须等于 `signer_address`，签的是快照的 SafeOp 哈希。
 - **验证码没有尝试次数和速率限制**（代理报告）。每次 `send_sms` 多一个同时有效的码、旧码不作废，邮箱验证码可在线爆破；`send_sms` 不校验手机号，可被刷短信费；验证码用 `rand` 生成。修法：每码限 5 次、发新码作废旧码、按 IP 与目标限流（Rails `rate_limit` 或 rack-attack）、`SecureRandom.random_number`、核销用条件 `update_all`。
 - **私钥和支付码打到浏览器控制台**（代理报告）：`pages/export.client.vue`（`console.log("privateKey", …)`）、`pages/badges/send/[class_id].vue`（支付码）、`pages/import.client.vue`（keystore）。浏览器扩展、错误上报、共用电脑都能读到。`/verify` 页和 `signinWithPassword` 的两处已随删除消失。修法：删日志。
 
