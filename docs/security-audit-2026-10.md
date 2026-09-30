@@ -19,8 +19,14 @@
 | 高 | `confirm_tx` 可用同一 Safe 的旧回执确认 | backend `f17f2c3`；生产 22 笔已执行交易核对一致 | `multisig.md` |
 | 中 | 后端不验证多签签名（顺带查出 2 笔因签名竞态失败的交易） | backend `f17f2c3`，app `8a1927f` | `multisig.md` |
 | 高 | 私钥和支付码打到浏览器控制台；生产构建去掉 `console.log` / `console.debug` | app `64c96cb` | — |
+| 中 | `get_user` / `get_by_handle` / `get_contacts` / `get_multisig_wallet_owners` 泄露手机号、邮箱或越权读取 | backend `d1c1af6`，app `be25ffa` | `auth.md` |
+| 中 | `GET /oauth/admin/applications` 无鉴权 | backend `bdb41c6`，app `c5ce6eb`（`ADMIN_USER_IDS`） | `auth.md` |
+| 高 | OAuth 授权可被 CSRF（cookie 无 SameSite + Nitro 接受表单）；登录 cookie 无 Secure / SameSite；站点无安全头、同意页可被点击劫持 | app `3cad627`（CSP 先 Report-Only） | `auth.md` |
+| 中 | 交易记录可伪造（冒充发送方、写进别人的收款记录）、`gas_used` 可为负 | backend `aa8fa31`，app `f9f8709` | `records.md` |
+| 中 | 任何用户都能往全局代币列表加币（假 USDC） | backend `53408c8` | `records.md` |
+| 中 | 多签：抢注别人的 Safe 地址；成员 `user_id` 和显示名可伪造 | backend `e9f6796`、`d1c1af6`，app `be25ffa` | `multisig.md` |
 
-以上均已核实，生产数据做过只读核查（见各设计文档）。截至 2026-10-01 **尚未部署**。
+以上均已核实，生产数据做过只读核查（见各设计文档）。截至 2026-10-01 **尚未部署**。部署前：`auth.md` 里唯一索引的查重 SQL；要启用管理员功能，在 `.env.production` 配 `ADMIN_USER_IDS` 并加进 `ginger.yml` 的 `secrets.inject`。
 
 ## 决定不修
 
@@ -39,14 +45,11 @@
 
 ### 中
 
-- **公开接口泄露 PII / 越权读取**（代理报告）：`get_user` 不需登录即返回 email、phone、gas 额度；`get_by_handle` 可按手机号反查；`get_contacts` 不需登录即读任意用户通讯录；`get_multisig_wallet_owners` 缺 `ensure_is_owner!`，返回成员手机号；`lookup_tx_memos` 不限归属。
-- **`GET /oauth/admin/applications` 无鉴权**（代理报告）：后端与 Nitro 代理都不检查，列出全部应用的 client_id、回调地址、owner。修法：管理员鉴权。
-- **登录 token 与安全头**（代理报告）：`semi_auth_token` 由 JS 写入 cookie，365 天，无 HttpOnly / Secure / SameSite；站点无 CSP、`frame-ancestors`、HSTS（Traefik 是否补了待确认），OAuth 同意页可被嵌进 iframe 点击劫持。修法：安全头；后端下发 `HttpOnly; Secure; SameSite=Lax` 的 cookie。
+- **`lookup_multisig_tx_memos` 不限归属**（代理报告）：按 tx_hash 返回任意多签交易的备注。同一审计项里的 `get_user` 等已修（见上）。
+- **登录 token 不是 HttpOnly**（其余部分已修，见上）：前端 JS 要读 `semi_auth_token` 拼 `Authorization` 头，改成 HttpOnly 需要后端下发 cookie 并做 CSRF 防护，2026-10-01 决定另行立项。强制 CSP（目前 Report-Only）也在这里跟进：看 semi-app 日志里的 `[csp-report]` 再收紧。
 - **令牌明文存库**（代理报告）：`AuthToken`、OAuth 访问令牌 / 刷新令牌 / 授权码都是明文；OAuth 访问令牌有效期 10 年。修法：只存 SHA-256；访问令牌约 1 小时。
-- **用户自报数据被采信**（代理报告，`home_controller.rb`）：`add_transaction` 的 `gas_used` 可为负、sender / receiver / memo 全由客户端填（可给别人塞钓鱼记录）；任何登录用户都能往全局代币列表加币（假 USDC）；`set_encrypted_keys` 覆盖已有 keystore 不需再次验证。
-- **多签数据可伪造**（代理报告）：创建钱包不校验 CREATE2 地址与 owners 是否匹配，可抢注别人 Safe 地址的其他链行，使对方无法启用该链；成员 `user_ids` 和 `*_name` 由客户端传入，可显示成可信的人名。
 - **OAuth `profile` scope 同时返回手机号和邮箱**（代理报告）。修法：拆出 `phone`、`email` scope。
-- **`.env.build` 曾提交进 git**（代理报告，semi-app `af3bc40` 加入、`25d2f36` 删除，remote `nantang-dao/semi-app`）：含 `VITE_SOLA_AUTH_TOKEN`，且该 token 曾打进客户端 bundle。修法：轮换；仓库若公开过，改写历史。
+- **`.env.build` 曾提交进公开仓库**（已核实）：semi-app `af3bc40` 加入、`25d2f36` 删除，在公开仓库 `nantang-dao/semi-app` 的 `pay`、`safe` 分支上。含 `VITE_SOLA_AUTH_TOKEN`（Sola / Hasura 的 `user` 角色 JWT，无过期时间；已不再使用，2026-10-01 决定只删历史、不轮换）和 `VITE_INFURA_API_KEY`（建议轮换）。改写这两个分支、只动这 2 个提交的方案已在本地验证，待强推。强推后 GitHub 仍可能按 SHA 缓存旧提交，彻底清除要联系 GitHub 支持。
 
 ### 低
 

@@ -9,6 +9,9 @@
 - 验证码不进日志：`send_sms` 不记录验证码，`filter_parameter_logging` 过滤 `code` 参数（`/signin` 的请求参数）。
 - 登录成功签发 `AuthToken`（一年有效），客户端以 `Authorization: Bearer <token>` 调用。
 - 支付码（keystore 口令）只在前端用，不以任何形式发给后端。
+- 别人的手机号、邮箱不出现在任何非本人的响应里：`get_user` 只返回公开字段（`HomeController::PUBLIC_USER_FIELDS`），`get_by_handle` 不返回手机号、按手机号查只对登录用户开放（不限频率），`get_contacts` 只能读自己的，多签成员列表和交易里的名字只用用户名（没有就显示地址）。手机号、邮箱、gas 额度只在 `get_me` 里给本人。
+- 管理员：`ADMIN_USER_IDS`（逗号分隔的用户 id，`ApplicationController#ensure_admin!`）。没配置就没有管理员。用于 `GET /oauth/admin/applications` 和 `set_token_class_listed`。
+- 前端登录 cookie `semi_auth_token`：`SameSite=Lax`，https 下加 `Secure`，旧 cookie 在打开页面时按新属性重写（`plugins/auth-cookie.client.ts`）。还不是 HttpOnly：前端要读它拼 `Authorization` 头，改成 HttpOnly 需要后端下发 cookie 并做 CSRF 防护，另行立项。Nitro 的 `/api/oauth/**` 会改状态的请求必须同源且是 JSON（`server/middleware/oauth-csrf.ts`）。
 
 ## 变更记录
 
@@ -72,6 +75,15 @@
   SELECT lower(evm_chain_active_key), count(*) FROM users WHERE evm_chain_active_key IS NOT NULL GROUP BY 1 HAVING count(*) > 1;
   SELECT lower(evm_chain_address), count(*) FROM users WHERE evm_chain_address IS NOT NULL GROUP BY 1 HAVING count(*) > 1;
   ```
+
+### 2026-10：越权读取手机号、OAuth 授权 CSRF、安全头
+
+2026-10 审计的「中」级问题，2026-10-01 修复。
+
+- **不登录就能查手机号和邮箱**：`get_user` 不需登录即返回邮箱、手机号、gas 额度；`get_by_handle` 可以用手机号反查并返回手机号；`get_contacts` 能读任意用户的通讯录；`get_multisig_wallet_owners` 不校验成员身份并返回成员手机号。修复见「当前规则」（backend `d1c1af6`，app `be25ffa`）。核对过调用方：前端从不调用 `get_user`，`get_by_handle` 的 9 处调用只读地址和 id，`get_contacts` 只查自己；生产日志（09-24 至 09-30）里 `get_user` 0 次调用。`get_multisig_wallet_owners` 按「这个 Safe 在任一链上的成员」判断，因为多链成员变更会查自己已被移除的那条链。
+- **`GET /oauth/admin/applications` 无鉴权**：改为仅管理员（backend `bdb41c6`，app `c5ce6eb`）。页面没有入口，生产日志 0 次访问。
+- **OAuth 授权可被 CSRF**（审计原文没列，核查 cookie 时发现）：Nitro 的 `/api/oauth/authorize` 用 cookie 认人、接受表单提交，cookie 没有 `SameSite`，Safari / Firefox 跨站 POST 会带上 —— 任意网站都能替已登录用户批准攻击者的 OAuth 应用，拿到令牌读手机号、邮箱。修复：cookie 加 `SameSite=Lax; Secure`，`/api/oauth/**` 同源 + JSON 检查（app `3cad627`）。
+- **安全头**：semi.im 原来一个都没有。加了 HSTS（不带 `includeSubDomains`，其他子域没核实）、`X-Frame-Options: DENY` 与 `frame-ancestors 'none'`（同意页点击劫持）、`nosniff`、`Referrer-Policy`（app `3cad627`）。限制脚本与连接来源的 CSP 先 `Report-Only`，违规报到 `/api/csp-report`、记在 semi-app 服务端日志里（`[csp-report]`）；看过日志、确定要放行的来源后再改成强制。
 
 ## 未修的问题
 

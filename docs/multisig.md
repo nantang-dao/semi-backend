@@ -77,7 +77,7 @@ gas / paymaster 字段不在核对范围内。ERC20 的 `symbol` 是提案人填
 
 - 锁定前先查余额：自付 gas 的链按 gas 上限 × `maxFeePerGas` 预付，转账再加上转出金额；不够就直接提示，不锁定。
 - `execute_multisig_tx` 把交易锁成 `executing`，同时记 `executor_id` 和 `updated_at`。
-- `confirm_multisig_tx`：后端从快照算 EntryPoint v0.7 的 userOpHash（`SafeOp.user_op_hash`，字段与 `execute.ts` 提交的一致），回执里必须有这个哈希的、`success` 为真的 `UserOperationEvent`。前端传的 `user_op_hash` 不再使用。
+- `confirm_multisig_tx`：后端从快照算 EntryPoint v0.7 的 userOpHash（`SafeOp.user_op_hash`，字段与 `execute.ts` 提交的一致），回执里必须有这个哈希的、`success` 为真的 `UserOperationEvent`。前端传的 `user_op_hash` 不再使用。记账的 gas 取自该事件的 `actualGasCost`，前端传的 `gas_used` 忽略。
 - bundler 当场拒收、交易没上链，并且换个时机可能成功（出价低于 bundler 最低价、AA21 预付不足）：锁定者调用 `reset_executing_multisig_tx` 立即退回 `ready`（其他人仍需等 5 分钟），提示原因。
 - 同一份快照永远不可能成功（AA24 签名、AA25 nonce、快照过期、上链后调用回滚）：`fail_multisig_tx`，需要重新发起。
 - 已提交但等回执超时：保持 `executing`，不能当失败（可能仍会上链，当失败会诱导重复发起）。
@@ -183,3 +183,20 @@ gas / paymaster 字段不在核对范围内。ERC20 的 `symbol` 是提案人填
 - 22 笔已执行的多签交易，链上回执里全部有后端从快照算出的 userOpHash——算法和链上一致，新规则不会误拒正常确认。
 - 18 份带 `safeOpHash` 的快照，重算值全部一致。
 - 86 个已存签名中 84 个恢复出的地址正确。另 2 个（`3mtohod3xscak` 2026-08-22、`3mw6wrttrvctv` 2026-09-23，都是 OP 上的转账，最终 failed）恢复出的地址不属于任何用户，也不对应库里任何一份快照。两者都是第二个签名人、在第一个人签名后 4～6 秒提交：打开页面时交易还没有快照，前端自己建了一份（gas 价不同）来签，而后端已存了第一个人的快照，于是存下了一个签的是另一份快照的签名，执行时整笔失败。新规则会当场拒收这种签名，前端取回已存快照重签。
+
+### 2026-10：抢注 Safe 地址、伪造成员名字
+
+**问题**：
+
+1. `create_multisig_wallet` 不校验 `safe_address` 与成员、门限是否对应。任何人都能拿别人 Safe 的地址、配上自己当成员，抢先登记某条链；之后真正的成员再也启用不了那条链（唯一索引）。
+2. 成员的 `user_id` 由客户端传入并优先采用，某个地址可以挂到任意用户名下，页面就显示成那个人。
+3. 提案时 `call_detail` 里的 `new_owner_name` / `old_owner_name` / `owner_name` 如果提案人自带，后端就不补、页面优先显示它 —— 攻击者的地址可以显示成「Alice」。名字还会退回手机号，冻结进 `owner_snapshot`。
+
+由 2026-10 的安全审计发现（第 3 条是核查时发现的）。
+
+**修正**（2026-10-01，backend `e9f6796`、`d1c1af6`，app `be25ffa`）：
+
+- 创建时后端按 CREATE2 复算地址（`WalletBinding.predict_safe_address(owners:, threshold:)`：成员升序、saltNonce 0，与 semi-core 一致），不一致返回 `address_mismatch`。由 semi-core 生成的向量锁住；生产上全部 8 个不同的 Safe 都能由其初始成员和门限复算出来。
+- 成员 `user_id` 一律按地址查找，客户端传的忽略。
+- 名字不入库：提案时丢掉 `*_name` 字段，读取时（`serialize_tx`）按地址现查用户名；`owner_snapshot` 里存过的名字读取时也重算。没有用户名就不给名字，前端显示地址。不用手机号兜底。库里的旧数据不用迁移。
+
