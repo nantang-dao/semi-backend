@@ -22,6 +22,19 @@ class WalletBindingTest < ActiveSupport::TestCase
     PREDICTIONS.each { |owner, safe| assert_equal safe.downcase, WalletBinding.predict_safe_address(owner) }
   end
 
+  # 多签：semi-core predictSafeAddress（owner 升序）。这里故意传未排序的 owner
+  MULTISIG_PREDICTIONS = [
+    [ [ "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf", "0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF" ], 2, "0xeFF1fF1B7782a058Afa5943EFCf75099c97A8C99" ],
+    [ [ "0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF", "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf" ], 1, "0xb60880aC1bb63c889cB9E96a4106ec96cC3F5dE7" ],
+    [ [ "0xe239cdc5fbe977a8a141B72194D3CF8c41bC5BC6", "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf", "0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF" ], 2, "0x467820335f758A005F5fb304d380475dBF2B6383" ]
+  ].freeze
+
+  test "多签 Safe 地址推导与 semi-core 一致" do
+    MULTISIG_PREDICTIONS.each do |owners, threshold, safe|
+      assert_equal safe.downcase, WalletBinding.predict_safe_address(owners: owners, threshold: threshold)
+    end
+  end
+
   test "消息格式与前端一致" do
     assert_equal "Semi: bind signing key 0x7e5f4552091a69125d5dfcb7b8c2659029395bdf and wallet 0x57e9161676313588c7f373f9cb17b00f1e65bef0 to account 3testuser0001",
                  WalletBinding.binding_message(BINDING[:user_id], BINDING[:active_key], BINDING[:safe_address])

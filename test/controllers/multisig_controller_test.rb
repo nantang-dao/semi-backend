@@ -8,7 +8,8 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
   ALICE = ALICE_KEY.address
   BOB = BOB_KEY.address
   CAROL = "0xcccccccccccccccccccccccccccccccccccccccc"
-  SAFE = "0x53d961df57ccd0da6e6d6eae3377d4ea5b3f273d"
+  # 后端校验 Safe 地址由成员和门限推出：ALICE + BOB、门限 2
+  SAFE = WalletBinding.predict_safe_address(owners: [ ALICE, BOB ], threshold: 2)
 
   ADD_CAROL = { new_owner: CAROL, new_threshold: 2 }.freeze
   REMOVE_BOB = { owner: BOB, prev_owner: ALICE, new_threshold: 1 }.freeze
@@ -37,7 +38,8 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
   def create_wallet(chain_ids: [ 10, 42161, 1 ], owners: [ ALICE, BOB ], threshold: 2)
     post "/create_multisig_wallet", params: {
       name: "Team", chain_id: chain_ids.first, chain_ids: chain_ids,
-      owners: owners.map { |a| { address: a } }, threshold: threshold, safe_address: SAFE
+      owners: owners.map { |a| { address: a } }, threshold: threshold,
+      safe_address: WalletBinding.predict_safe_address(owners: owners, threshold: threshold)
     }, headers: auth, as: :json
     assert_response :success, @response.body
     body["wallets"]
@@ -104,6 +106,25 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
     assert_equal @bob.handle, body["tx"]["owner_snapshot"]["owners"].first["name"]
   end
 
+  test "the Safe address must be derived from the submitted owners and threshold" do
+    # 拿 Alice + Bob 的 Safe 地址，配上 Alice + Carol 抢先登记
+    post "/create_multisig_wallet", params: {
+      name: "Squat", chain_id: 10, owners: [ { address: ALICE }, { address: CAROL } ], threshold: 1, safe_address: SAFE
+    }, headers: auth, as: :json
+    assert_equal "address_mismatch", body["code"]
+    assert_not Wallet.multisig_at(SAFE).exists?
+  end
+
+  test "member user ids come from their addresses, not from the client" do
+    carol = User.create!(evm_chain_active_key: CAROL, handle: "carol-#{SecureRandom.hex(3)}")
+    post "/create_multisig_wallet", params: {
+      name: "Team", chain_id: 10, owners: [ { address: ALICE }, { address: BOB, user_id: carol.id } ], threshold: 2, safe_address: SAFE
+    }, headers: auth, as: :json
+    assert_response :success, @response.body
+    owner = WalletOwner.find_by(wallet_id: body["wallet"]["id"], owner_address: BOB)
+    assert_equal @bob.id, owner.user_id
+  end
+
   test "rejects mixing mainnet and testnet chains" do
     post "/create_multisig_wallet", params: {
       name: "Team", chain_id: 10, chain_ids: [ 10, 11155111 ],
@@ -115,14 +136,14 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
   test "same address cannot be registered twice on a chain" do
     create_wallet(chain_ids: [ 10 ])
     post "/create_multisig_wallet", params: {
-      name: "Again", chain_id: 10, owners: [ { address: ALICE }, { address: BOB } ], threshold: 1, safe_address: SAFE
+      name: "Again", chain_id: 10, owners: [ { address: ALICE }, { address: BOB } ], threshold: 2, safe_address: SAFE
     }, headers: auth, as: :json
     assert_response :bad_request
     assert_equal "Wallet already exists", body["message"]
   end
 
   test "legacy rows with mixed-case addresses are matched without being rewritten" do
-    mixed = "0x53D961df57ccd0da6e6d6eae3377d4ea5b3f273D"
+    mixed = SAFE.delete_prefix("0x").chars.each_with_index.map { |c, i| i.even? ? c.upcase : c }.join.prepend("0x")
     legacy = Wallet.create!(user_id: @alice.id, name: "Old", wallet_type: "multisig", chain: "10", chain_id: 10,
                             evm_chain_address: mixed, threshold: 2, initial_owners: [ ALICE, BOB ], initial_threshold: 2)
     [ ALICE, BOB ].each_with_index { |a, i| WalletOwner.create!(wallet: legacy, owner_address: a, position: i) }

@@ -32,12 +32,17 @@ class MultisigController < ApplicationController
     # Ensure no duplicate address
     raise AppError.new("Duplicate owner addresses") if owner_addresses.uniq.length != owner_addresses.length
 
+    # 地址必须由这组成员和门限推出（CREATE2，saltNonce 0）。曾经不校验：任一用户都能拿别人
+    # Safe 的地址、配上自己当成员抢先登记某条链，对方就再也启用不了那条链。
+    unless owner_addresses.all? { |a| a.match?(/\A0x\h{40}\z/) } &&
+           WalletBinding.predict_safe_address(owners: owner_addresses, threshold: threshold) == safe_address
+      raise AppError.new("safe_address is not the Safe of these owners and threshold", code: "address_mismatch")
+    end
+
     # Check if wallet already exists
     if Wallet.multisig_at(safe_address).where(chain_id: chain_ids).exists?
       raise AppError.new("Wallet already exists")
     end
-
-    user_ids = owners.to_h { |o| [ o[:address].to_s.downcase, o[:user_id].presence ] }
 
     wallets = nil
     ActiveRecord::Base.transaction do
@@ -48,8 +53,7 @@ class MultisigController < ApplicationController
           chain_id: id,
           safe_address: safe_address,
           owner_addresses: owner_addresses,
-          threshold: threshold,
-          user_ids: user_ids
+          threshold: threshold
         )
       end
     end
@@ -107,8 +111,7 @@ class MultisigController < ApplicationController
           chain_id: id,
           safe_address: wallet.evm_chain_address,
           owner_addresses: initial_owners,
-          threshold: initial_threshold,
-          user_ids: {}
+          threshold: initial_threshold
         )
       end
     end
@@ -962,7 +965,9 @@ class MultisigController < ApplicationController
     end
   end
 
-  def create_multisig_wallet_row!(name:, creator_id:, chain_id:, safe_address:, owner_addresses:, threshold:, user_ids:)
+  # 成员的 user_id 一律按地址查（私钥绑定已唯一且经过证明），不用客户端传的：
+  # 曾经可以把某个地址挂到任意用户名下，页面就显示成那个人
+  def create_multisig_wallet_row!(name:, creator_id:, chain_id:, safe_address:, owner_addresses:, threshold:)
     sorted = owner_addresses.map(&:downcase).sort
     wallet = Wallet.create!(
       user_id: creator_id,
@@ -981,7 +986,7 @@ class MultisigController < ApplicationController
       owner_user = User.find_by("LOWER(evm_chain_active_key) = ?", addr)
       WalletOwner.create!(
         wallet_id: wallet.id,
-        user_id: user_ids[addr] || owner_user&.id,
+        user_id: owner_user&.id,
         owner_address: addr,
         position: idx
       )

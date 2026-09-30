@@ -60,8 +60,23 @@ module WalletBinding
     end
   end
 
-  def predict_safe_address(owner)
-    initializer = [ SAFE_INITIALIZER_PREFIX + owner.to_s.downcase.delete_prefix("0x") + SAFE_INITIALIZER_SUFFIX ].pack("H*")
+  # Safe.setup(owners, threshold, to, data, fallbackHandler, 0, 0, 0) 的 head：
+  # to（SafeModuleSetup）和 fallbackHandler（Safe4337Module）来自 PREFIX，data 就是 SUFFIX。
+  SETUP_SELECTOR = SAFE_INITIALIZER_PREFIX[0, 8]
+  MODULE_SETUP = SAFE_INITIALIZER_PREFIX[8 + 64 * 2 + 24, 40]
+  FALLBACK_HANDLER = SAFE_INITIALIZER_PREFIX[8 + 64 * 4 + 24, 40]
+
+  # 单 owner（账户钱包）或多 owner（多签）的 Safe 地址。saltNonce 0，owner 按地址升序
+  # （与 semi-core account/safeAccount.ts 的 sortOwners 一致，顺序会改变地址）。
+  def predict_safe_address(owner = nil, owners: nil, threshold: 1)
+    list = (owners || [ owner ]).map { |a| a.to_s.downcase.delete_prefix("0x") }.sort
+    word = ->(hex) { hex.to_s.rjust(64, "0") }
+    head = [
+      word.(256.to_s(16)), word.(threshold.to_i.to_s(16)), word.(MODULE_SETUP),
+      word.((256 + 32 * (1 + list.length)).to_s(16)), word.(FALLBACK_HANDLER), word.(0), word.(0), word.(0)
+    ]
+    body = [ word.(list.length.to_s(16)) ] + list.map { |a| word.(a) }
+    initializer = [ SETUP_SELECTOR + head.join + body.join + SAFE_INITIALIZER_SUFFIX ].pack("H*")
     salt = keccak(keccak(initializer) + ("\x00" * 32).b)
     preimage = [ "ff" + SAFE_PROXY_FACTORY ].pack("H*") + salt + [ SAFE_INIT_CODE_HASH ].pack("H*")
     "0x" + keccak(preimage).unpack1("H*")[24, 40]
