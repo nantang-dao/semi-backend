@@ -40,6 +40,7 @@ bin/brakeman
 
 ### Authentication Flow
 - Users authenticate via phone SMS code or email code — there is no password login (removed 2026-10, see `docs/auth.md`)
+- Open findings from the 2026-10 security audit are tracked in `docs/security-audit-2026-10.md`; mark them fixed there when you fix one
 - `VerificationToken` stores temporary codes with expiration
 - On successful auth, `AuthToken` is created and returned to client
 - Authenticated requests use `Authorization: Bearer <token>` header
