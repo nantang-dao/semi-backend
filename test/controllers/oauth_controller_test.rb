@@ -44,4 +44,20 @@ class OauthControllerTest < ActionDispatch::IntegrationTest
     post "/oauth/authorize", params: params.merge(action_choice: "deny"), headers: @auth, as: :json
     assert_response :bad_request
   end
+
+  test "admin application list requires an admin" do
+    get "/oauth/admin/applications"
+    assert_response :unauthorized
+
+    user = User.create!(phone: "13800000020")
+    token = user.gen_auth_token
+    get "/oauth/admin/applications", headers: { "Authorization" => "Bearer #{token}" }
+    assert_equal "forbidden", JSON.parse(@response.body)["code"]
+
+    ENV["ADMIN_USER_IDS"] = "someone-else, #{user.id}"
+    get "/oauth/admin/applications", headers: { "Authorization" => "Bearer #{token}" }
+    assert_response :success
+  ensure
+    ENV.delete("ADMIN_USER_IDS")
+  end
 end

@@ -154,8 +154,9 @@ class OauthController < ApplicationController
     render json: { result: "ok", applications: apps.map { |a| app_json(a) } }
   end
 
-  # GET /oauth/admin/applications
+  # GET /oauth/admin/applications —— 仅管理员（ADMIN_USER_IDS）
   def admin_list_applications
+    ensure_admin!
     apps = OauthApplication.includes(:owner).all
     render json: {
       result: "ok",

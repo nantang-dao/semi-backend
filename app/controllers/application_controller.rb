@@ -40,6 +40,17 @@ class ApplicationController < ActionController::API
         current_user
     end
 
+    # 管理员名单来自环境变量 ADMIN_USER_IDS（逗号分隔的用户 id）。没配置就没有管理员。
+    def admin?(user = current_user)
+        ids = ENV.fetch("ADMIN_USER_IDS", "").split(",").map(&:strip).reject(&:empty?)
+        user.present? && ids.include?(user.id)
+    end
+
+    def ensure_admin!
+        authenticate_user
+        raise AppError.new("Admin only", code: "forbidden") unless admin?
+    end
+
     rescue_from AppError do |err|
         Rails.logger.info err.message
         body = { result: "error", message: err.message }
