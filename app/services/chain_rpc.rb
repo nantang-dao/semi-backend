@@ -40,6 +40,14 @@ class ChainRpc
     result.to_i(16)
   end
 
+  # 交易本身（取 input）；读不到返回 nil，同 get_transaction_receipt
+  def self.get_transaction(tx_hash, chain_id)
+    rpc_result(chain_id, "eth_getTransactionByHash", [ tx_hash ])
+  rescue Error => e
+    Rails.logger.error("ChainRpc transaction lookup failed: #{e.message}")
+    nil
+  end
+
   # 获取交易 receipt；还没上链或 RPC 暂时不可用都返回 nil，由调用方重试后失败闭合
   def self.get_transaction_receipt(tx_hash, chain_id)
     rpc_result(chain_id, "eth_getTransactionReceipt", [ tx_hash ])

@@ -24,6 +24,7 @@ class UserOpReceipt
   #   曾经可选、缺省时按 sender 匹配 —— 同一 Safe 的任意旧回执都能通过。
   # @raise [NotFound] 读不出对应的事件 —— 失败闭合，宁可让前端重试也不猜它成功
   # @raise [Reverted] UserOp 上链了但内层调用回滚
+  # @return [Hash] 这笔 UserOp 的事件
   def self.assert_succeeded!(logs, padded_sender, user_op_hash)
     raise ArgumentError, "user_op_hash is required" if user_op_hash.blank?
 
@@ -40,6 +41,12 @@ class UserOpReceipt
     event = events.find { |log| log["topics"][1].to_s.downcase == wanted }
     raise NotFound, "回执中找不到这笔交易的 UserOp" unless event
     raise Reverted, "链上执行失败（UserOp 已上链但内层调用回滚）" unless success?(event)
+    event
+  end
+
+  # data 的第三个字：这笔 UserOp 实际付的 gas（wei）
+  def self.actual_gas_cost(event)
+    event["data"].to_s.delete_prefix("0x")[128, 64].to_i(16)
   end
 
   # data 的第二个字（32..63 字节）是 bool success。

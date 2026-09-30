@@ -245,24 +245,21 @@ class HomeController < ApplicationController
 
   end
 
+  # 交易记录必须对得上链上回执，gas 和成败取自回执，见 TransactionProof
   def add_transaction
     user = current_user
     raise AppError.new("User Not Found") unless user
 
-    transaction = user.transactions.create(tx_hash: params[:tx_hash], gas_used: params[:gas_used], status: params[:status], chain: params[:chain], data: params[:data], memo: params[:memo], sender_note: params[:sender_note], receiver_address: params[:receiver_address], sender_address: params[:sender_address], metadata: params[:metadata], extra: params[:extra])
-    user.update(transaction_count: user.transaction_count + 1)
+    record_verified_transaction!(user)
     render json: { result: "ok" }
   end
 
   def add_transaction_with_gas_credits
-    # raise AppError.new("ADMIN ONLY") unless params[:ADMIN_KEY] == ENV["ADMIN_KEY"]
-    # user = User.find_by(id: params[:id])
     user = current_user
     raise AppError.new("User Not Found") unless user
 
-    transaction = user.transactions.create(tx_hash: params[:tx_hash], gas_used: params[:gas_used], status: params[:status], chain: params[:chain], data: params[:data], memo: params[:memo], sender_note: params[:sender_note], receiver_address: params[:receiver_address], sender_address: params[:sender_address], metadata: params[:metadata], extra: params[:extra])
-    user.increment!(:total_used_gas_credits, params[:gas_used].to_i)
-    user.update(transaction_count: user.transaction_count + 1)
+    proof = record_verified_transaction!(user)
+    user.increment!(:total_used_gas_credits, proof.gas_used)
     render json: { result: "ok" }
   end
 
@@ -334,6 +331,26 @@ class HomeController < ApplicationController
   end
 
   private
+
+  def record_verified_transaction!(user)
+    proof = begin
+      TransactionProof.verify!(user: user, tx_hash: params[:tx_hash], chain: params[:chain],
+                               sender_address: params[:sender_address], receiver_address: params[:receiver_address])
+    rescue TransactionProof::Invalid => e
+      raise AppError.new(e.message, code: "invalid_transaction")
+    rescue TransactionProof::Unavailable => e
+      raise AppError.new(e.message, code: "chain_unavailable")
+    end
+
+    user.transactions.create!(
+      tx_hash: params[:tx_hash], gas_used: proof.gas_used, status: proof.success ? "success" : "failed",
+      chain: params[:chain], data: params[:data], memo: params[:memo], sender_note: params[:sender_note],
+      receiver_address: params[:receiver_address], sender_address: params[:sender_address],
+      metadata: params[:metadata], extra: params[:extra]
+    )
+    user.increment!(:transaction_count)
+    proof
+  end
 
   def validate_handle_format!(handle)
     raise AppError.new("handle can not be empty") if handle.blank?

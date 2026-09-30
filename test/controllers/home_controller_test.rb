@@ -1,4 +1,5 @@
 require "test_helper"
+require "minitest/mock"
 
 class HomeControllerTest < ActionDispatch::IntegrationTest
   test "should get index" do
@@ -271,29 +272,38 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert JSON.parse(@response.body).key?("remaining_gas_credits")
   end
 
+  SAFE_ADDR = "0x" + "5a" * 20
+  RECEIVER_ADDR = "0x" + "7c" * 20
+
+  # 链上回执：SAFE_ADDR 的 UserOp，实际 gas 为 gas
+  def with_chain_receipt(gas: 4321, success: true, &block)
+    word = ->(n) { n.to_s(16).rjust(64, "0") }
+    event = { "topics" => [ UserOpReceipt::EVENT_TOPIC, "0x" + "ab" * 32, "0x" + "0" * 24 + SAFE_ADDR.delete_prefix("0x"), "0x" + "0" * 64 ],
+              "data" => "0x" + word.(0) + word.(success ? 1 : 0) + word.(gas) + word.(1) }
+    ChainRpc.stub(:get_transaction_receipt, { "status" => "0x1", "logs" => [ event ] }) do
+      ChainRpc.stub(:get_transaction, { "input" => "0x" + RECEIVER_ADDR.delete_prefix("0x") }, &block)
+    end
+  end
+
+  def tx_params(**over)
+    { tx_hash: "0x" + "12" * 32, gas_used: 100, status: "success", chain: "op mainnet", data: "data", memo: "test memo",
+      sender_note: "s note", receiver_note: "r note", sender_address: SAFE_ADDR, receiver_address: RECEIVER_ADDR }.merge(over)
+  end
+
   test "should add transaction" do
-    user = User.create(phone: "1234567890")
-    post add_transaction_url, params: {
-      tx_hash: "0x1234567890",
-      gas_used: 100,
-      status: "success",
-      chain: "evm",
-      data: "data",
-      memo: "test memo",
-      sender_note: "s note",
-      receiver_note: "r note",
-      sender_address: "0x123",
-      receiver_address: "0x456"
-    }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
-    assert_response :success
+    user = User.create(phone: "1234567890", evm_chain_address: SAFE_ADDR)
+    with_chain_receipt do
+      post add_transaction_url, params: tx_params, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    end
+    assert_response :success, @response.body
     assert JSON.parse(@response.body).key?("result")
 
-    tx = Transaction.find_by(tx_hash: "0x1234567890")
+    tx = Transaction.find_by(tx_hash: "0x" + "12" * 32)
     assert_equal "test memo", tx.memo
     assert_equal "s note", tx.sender_note
     assert_equal "r note", tx.receiver_note
-    assert_equal "0x123", tx.sender_address
-    assert_equal "0x456", tx.receiver_address
+    assert_equal SAFE_ADDR, tx.sender_address
+    assert_equal RECEIVER_ADDR, tx.receiver_address
 
     get get_transactions_url, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
     assert_response :success
@@ -302,6 +312,35 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     get remaining_free_transactions_url, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
     assert_response :success
     assert JSON.parse(@response.body).key?("remaining_free_transactions")
+  end
+
+  test "transaction records must match the chain" do
+    user = User.create!(phone: "13800000031", evm_chain_address: SAFE_ADDR)
+    victim = User.create!(phone: "13800000032", evm_chain_address: "0x" + "6b" * 20)
+    headers = { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    before = Transaction.count
+
+    # 冒充别人发出的交易
+    with_chain_receipt { post add_transaction_url, params: tx_params(sender_address: victim.evm_chain_address), headers: headers }
+    assert_equal "invalid_transaction", JSON.parse(@response.body)["code"]
+
+    # 写一条收款方与链上无关的记录
+    with_chain_receipt { post add_transaction_url, params: tx_params(receiver_address: victim.evm_chain_address), headers: headers }
+    assert_equal "invalid_transaction", JSON.parse(@response.body)["code"]
+    assert_equal before, Transaction.count
+  end
+
+  test "gas and status come from the receipt, never from the client" do
+    user = User.create!(phone: "13800000033", evm_chain_address: SAFE_ADDR)
+    with_chain_receipt(gas: 5000, success: false) do
+      post add_transaction_with_gas_credits_url, params: tx_params(gas_used: -1_000_000, status: "success"),
+                                                 headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    end
+    assert_response :success, @response.body
+    tx = Transaction.last
+    assert_equal 5000, tx.gas_used
+    assert_equal "failed", tx.status
+    assert_equal 5000, user.reload.total_used_gas_credits
   end
 
   test "should signin with email" do
@@ -325,29 +364,18 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "should add transaction with gas credits" do
-    ADMIN_KEY = "1234567890"
-    ENV["ADMIN_KEY"] = ADMIN_KEY
-    user = User.create(phone: "1234567890")
-    post add_transaction_with_gas_credits_url, params: {
-      id: user.id,
-      tx_hash: "0x1234567890",
-      gas_used: 100,
-      status: "success",
-      chain: "evm",
-      data: "data",
-      sender_note: "s note",
-      receiver_note: "r note",
-      sender_address: "0x123",
-      receiver_address: "0x456"
-    }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
-    assert_response :success
+    user = User.create(phone: "1234567890", evm_chain_address: SAFE_ADDR)
+    with_chain_receipt do
+      post add_transaction_with_gas_credits_url, params: tx_params.except(:memo), headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    end
+    assert_response :success, @response.body
     assert JSON.parse(@response.body).key?("result")
 
-    tx = Transaction.find_by(tx_hash: "0x1234567890")
+    tx = Transaction.find_by(tx_hash: "0x" + "12" * 32)
     assert_equal "s note", tx.sender_note
     assert_equal "r note", tx.receiver_note
-    assert_equal "0x123", tx.sender_address
-    assert_equal "0x456", tx.receiver_address
+    assert_equal SAFE_ADDR, tx.sender_address
+    assert_equal RECEIVER_ADDR, tx.receiver_address
   end
 
   test "should set transaction note as owner" do

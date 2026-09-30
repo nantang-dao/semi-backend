@@ -573,7 +573,7 @@ class MultisigController < ApplicationController
     rescue SafeOp::InvalidSnapshot => e
       raise AppError.new("Invalid snapshot: #{e.message}", code: "receipt_mismatch")
     end
-    verify_userop_receipt!(tx_hash, chain_id, wallet.evm_chain_address, expected_user_op_hash)
+    event = verify_userop_receipt!(tx_hash, chain_id, wallet.evm_chain_address, expected_user_op_hash)
 
     # 校验通过后再原子推进状态：防止并发 confirm 导致 apply_wallet_config 执行两次
     updated = MultisigTransaction.where(id: tx.id, status: "executing").update_all(status: "confirming")
@@ -585,15 +585,14 @@ class MultisigController < ApplicationController
     # Gas is sponsored by the paymaster on-chain (free for all signers), but the
     # actual cost (wei, from the UserOp receipt's actualGasCost) is accredited to
     # the executor — the "last user" who triggered execution.
-    gas_used = params[:gas_used].to_s.presence
+    # 取自回执里这笔 UserOp 的 actualGasCost，不用前端传的 gas_used（曾经可以是负数）
+    gas_used = UserOpReceipt.actual_gas_cost(event)
     executor = current_user
 
     ActiveRecord::Base.transaction do
-      tx.update!(status: "executed", tx_hash: tx_hash, executor_id: executor.id, gas_used: (gas_used || "0"))
+      tx.update!(status: "executed", tx_hash: tx_hash, executor_id: executor.id, gas_used: gas_used)
 
-      if gas_used.present? && gas_used.to_d > 0
-        executor.increment!(:total_used_gas_credits, gas_used.to_d)
-      end
+      executor.increment!(:total_used_gas_credits, gas_used) if gas_used > 0
 
       # Advance queue based on executed tx or the tx it replaced
       advance_from = tx.queue_position
@@ -1123,7 +1122,7 @@ class MultisigController < ApplicationController
 
     # 打包交易成功不等于这笔 UserOp 成功 —— 见 UserOpReceipt。
     begin
-      UserOpReceipt.assert_succeeded!(logs, padded_safe, user_op_hash)
+      return UserOpReceipt.assert_succeeded!(logs, padded_safe, user_op_hash)
     rescue UserOpReceipt::NotFound, UserOpReceipt::Reverted => e
       raise AppError.new("#{e.message}，拒绝确认")
     end
