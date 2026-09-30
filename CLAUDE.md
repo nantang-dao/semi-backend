@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Semi is a Rails 8 API-only backend for a cryptocurrency wallet application. It handles user authentication (phone/email/password), wallet management, blockchain transactions, and token class tracking.
+Semi is a Rails 8 API-only backend for a cryptocurrency wallet application. It handles user authentication (phone/email verification code), wallet management, blockchain transactions, and token class tracking.
 
 ## Common Commands
 
@@ -39,7 +39,7 @@ bin/brakeman
 ## Architecture
 
 ### Authentication Flow
-- Users authenticate via phone SMS code, email code, or password
+- Users authenticate via phone SMS code or email code — there is no password login (removed 2026-10, see `docs/auth.md`)
 - `VerificationToken` stores temporary codes with expiration
 - On successful auth, `AuthToken` is created and returned to client
 - Authenticated requests use `Authorization: Bearer <token>` header

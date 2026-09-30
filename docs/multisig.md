@@ -57,6 +57,18 @@
 - 撤回（`withdraw_multisig_tx`）会一并撤回同组其他链上尚无人签名的交易。
 - 可见性按链：某条链确认后，新 owner 在该链上即可见；其他链未执行前在那些链上仍不可见，与链上状态一致。
 
+## 待签内容必须等于展示内容
+
+页面展示给签名人的是 `call_detail`，链上执行的是快照里的 `callData`。快照由第一个签名人上传，后面的人签的都是它；两者之间不核对，提案人或第一个签名人就能让其他 owner 看着「转 0.01」签下「转走全部」，或者看着「拒绝」签下任意操作。所以三处都核对，规则相同：
+
+- **提案时**（后端 `MultisigIntent.validate_proposal!`）：`evm_call_data` 必须就是 `call_detail` 编码出来的调用——owner 变更逐个参数比对（不只是选择器），ERC20 比对收款人（带了 `decimals` 再比金额），ETH 转账和拒签不能带 calldata。
+- **收快照时**（第一个签名人、拒签提案；`MultisigIntent.validate_snapshot!`）：`sender`、`chainId`、`nonce`、`callData` 都要对得上。拒签快照必须是对 Safe 自身的空调用、沿用目标交易的 nonce。
+- **签名前**（前端 `utils/multisig_calls.ts` + semi-core `assertSnapshotMatchesCall`）：从 `call_detail` 重新编码（ERC20 的 `decimals` 读合约），和快照逐字节比对；不一致拒签。这一道不依赖后端，后端被攻破也挡得住。
+
+每笔多签交易只执行**一个** CALL。旧版 transfer 页会附加一个 remark 上链调用（`call_detail.remark_to` / `remark_data`），签名人看不到它，现在提案和签名都拒绝。生产上从没有配置过 remark 代理，没有交易用过它。
+
+gas / paymaster 字段不在核对范围内。ERC20 的 `symbol` 是提案人填的，详情页同时显示代币合约地址，以地址为准。
+
 ## 执行与失败
 
 执行逻辑只有一份：`semi-app/utils/multisig_execute.ts`，详情页和队列页都调用它（以前两页各写一套，队列页漏了余额检查）。
@@ -107,3 +119,31 @@
 | `3mvk5f3qb4b4x` | Arbitrum | `0xd03b…` |
 
 保留：`0xab7b…` 的 Arbitrum 行（核对时已有 2 笔多签交易）和主网行（地址上有 0.0001 ETH，有人在测试）；`0xc0cf…` 的 Arbitrum、主网行（都有交易，主网已部署）。被删行的钱包之后仍可手动启用；`0x7ea2…` 成员变更过，按新规则不能再启用新链。
+
+### 2026-10：签名前核对快照内容（修复盲签）
+
+**原设计**：第一个签名人按 `call_detail` 建快照（`user_op_snapshot`），和签名一起上传；后端原样保存。后面的签名人取回快照直接签，只做哈希自洽检查（`safeOpHash`），`expectedHash` 从未传入。拒签提案的快照由提案人上传，后端只核对 nonce。配置类交易（owner / 门限变更）后端只核对 calldata 的函数选择器。多签转账可以在 `call_detail.remark_to` / `remark_data` 里附带一个 remark 上链调用，签名时原样拼到调用列表里。
+
+**问题**：页面展示的是 `call_detail`，签下去的是快照里的 `callData`，两者之间没有任何核对。哈希自洽证明不了快照签的是展示的那笔交易——上传快照的人可以同时算好哈希。
+
+1. 任一 owner 作为第一个签名人，在「转 0.01 给 Bob」的提案上传「转走全部余额」或 `enableModule(攻击者)` 的快照；其他 owner 照着页面签名，凑够门限即可执行。拒签提案同理：展示「拒绝」，快照可以是任意操作。后端被攻破时同样能改快照。
+2. 配置类交易只查选择器：展示「添加 owner Bob」，calldata 可以是 `addOwnerWithThreshold(攻击者, 1)`。
+3. `remark_to` / `remark_data` 在页面上完全不显示，却会作为第二个调用执行，可以是任意合约的任意调用。
+
+由 2026-10 的安全审计发现（Claude 在审计会话中）。
+
+**影响**：用当前规则核对了生产上全部 53 笔多签交易（只读）：
+
+- 没有任何一笔带 `remark_to`——生产从未配置 remark 代理地址（`VITE_OP_REMARK_PROXY` 未设），这个功能单签多签都没生效过。
+- 42 笔快照与展示内容一致，3 笔没有快照。
+- 8 笔 ERC20 转账（2026-06-08 至 06-10，NT 代币，OP）快照不一致，但**不是篡改**：收款人和金额都与展示一致，调用目标却是 Safe 自身而不是代币合约。这是 semi-app `b48b623`（2026-06-10）修掉的旧 bug，没有资金转出。这 8 笔都已不在签名中，新规则不影响它们。
+
+**修正**（2026-10-01，semi-app `e257a43`、semi-backend `2549a8e`）：
+
+- 前端签名前（`semi-app/utils/multisig_calls.ts` + semi-core `assertSnapshotMatchesCall`）：从 `call_detail` 重新编码唯一的那个调用（ERC20 的 `decimals` 读合约），和快照的 `sender`、`chainId`、`nonce`、`callData` 逐项比对，不一致拒签。自己建的快照同样核对。这一道不依赖后端。
+- 后端（`MultisigIntent`）：提案时 `evm_call_data` 必须就是 `call_detail` 的编码（owner 变更逐参数比对）；收快照时（第一个签名人、拒签提案）核对 `sender`、`chainId`、`nonce`、`callData`。还没刷新到新版前端的签名人也因此受保护。
+- 多签只执行一个 CALL，去掉 remark 附加调用；前后端都拒绝带 `remark_to` / `remark_data` 的提案。单签的 remark 不受影响（自己签自己的交易，没有别人塞调用的问题）。
+- 详情页显示 ERC20 的代币合约地址：`symbol` 是提案人填的，以地址为准。
+- 前后端的编码是两份实现，用 semi-core 生成的同一组向量锁住（`semi-core/test/snapshot-intent.test.ts`、`semi-backend/test/services/multisig_intent_test.rb`）。
+
+**有意不做**：gas / paymaster 字段（`maxFeePerGas`、各 gas 上限、`paymasterAndData`）不核对。它们决定谁付费、付多少，不改变 Safe 执行什么。理论上，自付 gas 的链上，第一个签名人可以抬高 `maxFeePerGas`，再自己打包并把受益人设成自己，从 Safe 里多收手续费。评估后决定不防（2026-10-01）。以后如果要恢复多签 remark，只放行本链配置的代理地址 + `saveRemark`，页面显示解码后的备注，后端也要知道代理地址。
