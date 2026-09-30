@@ -11,7 +11,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     # TODO: Set up ENV and stub RPCClient if needed
     post send_sms_url, params: { phone: "1234567890" }
     assert VerificationToken.find_by(context: "phone-login", sent_to: "1234567890")
-    assert JSON.parse(@response.body).key?("code")
+    assert_equal({ "result" => "ok" }, JSON.parse(@response.body))
   end
 
   test "should signin with valid code" do
@@ -24,40 +24,10 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert JSON.parse(@response.body).key?("address_type")
   end
 
-  test "should signin with valid password" do
-    post signin_with_password_url, params: { phone: "1234567890", password: "12345" }
-    assert_response :success
-    assert JSON.parse(@response.body).key?("auth_token")
-    assert JSON.parse(@response.body).key?("phone")
-    assert JSON.parse(@response.body).key?("id")
-    assert JSON.parse(@response.body).key?("address_type")
-    user = User.find_by(phone: "1234567890")
-    assert BCrypt::Password.new(user.encrypted_password) == "12345"
-
-    post signin_with_password_url, params: { phone: "1234567890", password: "12345" }
-    assert_response :success
-    assert JSON.parse(@response.body).key?("auth_token")
-    assert JSON.parse(@response.body).key?("phone")
-    assert JSON.parse(@response.body).key?("id")
-    assert JSON.parse(@response.body).key?("address_type")
-  end
-
-  test "should signin with valid password for passwordless user" do
-    User.create(phone: "1234567890")
-    post signin_with_password_url, params: { phone: "1234567890", password: "12345" }
-    assert_response :success
-    assert JSON.parse(@response.body).key?("auth_token")
-    assert JSON.parse(@response.body).key?("phone")
-    assert JSON.parse(@response.body).key?("id")
-    assert JSON.parse(@response.body).key?("address_type")
-    user = User.find_by(phone: "1234567890")
-    assert BCrypt::Password.new(user.encrypted_password) == "12345"
-  end
-
-  test "should signin with invalid password" do
-    User.create(phone: "1234567890", encrypted_password: BCrypt::Password.create("12345"))
-    post signin_with_password_url, params: { phone: "1234567890", password: "123456" }
-    assert_response :unauthorized
+  test "password signin is not routable" do
+    post "/signin_with_password", params: { phone: "1234567890", password: "12345" }
+    assert_response :not_found
+    assert_nil User.find_by(phone: "1234567890")
   end
 
   test "should set handle" do

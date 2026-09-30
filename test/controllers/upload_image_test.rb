@@ -4,8 +4,8 @@ require "test_helper"
 # 转发本身没有网络桩，故不在此覆盖。
 class UploadImageTest < ActionDispatch::IntegrationTest
   setup do
-    post signin_with_password_url, params: { phone: "19900001111", password: "hunter2" }
-    @auth = { "Authorization" => "Bearer #{JSON.parse(@response.body)['auth_token']}" }
+    user = User.create!(phone: "19900001111")
+    @auth = { "Authorization" => "Bearer #{user.gen_auth_token}" }
   end
 
   def png(name: "a.png", type: "image/png", bytes: "x")

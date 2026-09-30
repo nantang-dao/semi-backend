@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_15_000001) do
+ActiveRecord::Schema[8.0].define(version: 2026_10_01_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -245,7 +245,6 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_15_000001) do
     t.string "evm_chain_active_key"
     t.integer "remaining_gas_credits", default: 0, null: false
     t.decimal "total_used_gas_credits", precision: 80, default: "0", null: false
-    t.string "encrypted_password"
     t.boolean "phone_verified", default: false
     t.integer "transaction_count", default: 0, null: false
     t.boolean "can_send_badge", default: false
