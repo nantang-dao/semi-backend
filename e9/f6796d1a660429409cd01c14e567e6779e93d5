@@ -1,0 +1,27 @@
+app/controllers/multisig_controller.rb
+  s_21c523732de41d::t_f73e413b60a731 114
+  s_21c523732de41d::t_6227df1e7baf39 35-41,56,968-970,989
+app/services/wallet_binding.rb
+  s_21c523732de41d::t_07a3a8f581c6dc 63-74,77,79
+  s_21c523732de41d::t_61bd5978a43875 75-76,78
+test/services/wallet_binding_test.rb
+  s_21c523732de41d::t_f1236055228d95 25-37
+test/controllers/multisig_controller_test.rb
+  s_21c523732de41d::t_f73e413b60a731 11-12,41-42,109-127,139,146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e9f6796d1a660429409cd01c14e567e6779e93d5",
+  "prompts": {},
+  "sessions": {
+    "s_21c523732de41d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7cce0af7-aa66-434c-92bc-b50481bff78b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
