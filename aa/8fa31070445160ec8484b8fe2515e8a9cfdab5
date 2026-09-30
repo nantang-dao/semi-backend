@@ -1,0 +1,34 @@
+app/services/chain_rpc.rb
+  s_21c523732de41d::t_803aeafc981f25 43-50
+app/controllers/home_controller.rb
+  s_21c523732de41d::t_006060b4150226 248,253,261-262,335-353
+  s_21c523732de41d::t_d681e8747866cb 354
+test/controllers/home_controller_test.rb
+  s_21c523732de41d::t_7a73a0d5d8d39d 321,330
+  s_21c523732de41d::t_eab6b2b84e4c04 2,275-292,294-298,301,305-306,317-320,322-329,331-345,367-371,374,377-378
+test/services/transaction_proof_test.rb
+  s_21c523732de41d::t_b71a67124ea3b3 1-72
+app/services/user_op_receipt.rb
+  s_21c523732de41d::t_0037f82a1aee62 27,44-49
+app/controllers/multisig_controller.rb
+  s_21c523732de41d::t_0037f82a1aee62 576,588-589,593,595,1125
+app/services/transaction_proof.rb
+  s_21c523732de41d::t_7829b222ebd7aa 1-53,55-80
+  s_21c523732de41d::t_7d9711ad500f45 54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "aa8fa31070445160ec8484b8fe2515e8a9cfdab5",
+  "prompts": {},
+  "sessions": {
+    "s_21c523732de41d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7cce0af7-aa66-434c-92bc-b50481bff78b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
