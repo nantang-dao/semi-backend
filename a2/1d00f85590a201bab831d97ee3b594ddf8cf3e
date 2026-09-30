@@ -1,0 +1,31 @@
+docs/multisig.md
+  s_21c523732de41d::t_a1fe3ae49be49c 80
+  s_21c523732de41d::t_dfac0873052d47 186-202
+docs/auth.md
+  s_21c523732de41d::t_96e5e253dcae63 12-14,79-86
+  s_21c523732de41d::t_18dee16ca04e8d 87
+docs/security-audit-2026-10.md
+  s_21c523732de41d::t_2bb6285809c850 22-27,29,48-49,52
+api.md
+  s_21c523732de41d::t_d53eac9a5b83c5 157,167-170,287-288,292,297-298,350,403,433,460-470,581-584
+docs/records.md
+  s_21c523732de41d::t_e02c2e0959d091 1-33
+CLAUDE.md
+  s_21c523732de41d::t_5b847857e659d7 44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a21d00f85590a201bab831d97ee3b594ddf8cf3e",
+  "prompts": {},
+  "sessions": {
+    "s_21c523732de41d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7cce0af7-aa66-434c-92bc-b50481bff78b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
