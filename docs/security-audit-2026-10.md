@@ -14,6 +14,11 @@
 | 严重 | 多签盲签：后面的签名人不核对快照与展示内容；配置类交易后端只查选择器；`remark_to` 附加调用页面不可见 | backend `2549a8e`，app `e257a43` | `multisig.md` 2026-10 |
 | 严重 | OAuth `redirect_uris` 可登记 `javascript:`，同意页跳转即在 semi.im 执行脚本 | backend `e228979`，app `3b2470c` | `auth.md` |
 | 严重 | `evm_chain_active_key` / `evm_chain_address` 可随意自报、无唯一约束（读别人交易记录、多签冒充成员） | backend `95502b2`，app `4228ffe`；生产重复数据已清理 | `auth.md` |
+| 高 | 验证码没有尝试次数和频率限制（邮箱码可在线爆破、短信可被刷） | backend `4b03966`，app `b5e4231` | `auth.md` |
+| 高 | `sync_wallet` 链上校验失效（`0x0x` 选择器 + `rescue` 吞掉不一致），降级信任前端的 owners / 门限 | backend `57ad4d7`，app `559e143`；生产 15 个钱包行核对一致 | `multisig.md` |
+| 高 | `confirm_tx` 可用同一 Safe 的旧回执确认 | backend `f17f2c3`；生产 22 笔已执行交易核对一致 | `multisig.md` |
+| 中 | 后端不验证多签签名（顺带查出 2 笔因签名竞态失败的交易） | backend `f17f2c3`，app `8a1927f` | `multisig.md` |
+| 高 | 私钥和支付码打到浏览器控制台；生产构建去掉 `console.log` / `console.debug` | app `64c96cb` | — |
 
 以上均已核实，生产数据做过只读核查（见各设计文档）。截至 2026-10-01 **尚未部署**。
 
@@ -31,11 +36,6 @@
 
 - **Badge 接口可匿名耗光管理员钱包的 gas**（已核实，`semi-app/server/utils/badge_auth.ts`）。`verifyBadgeAuth` 只查签名与请求里自报的地址一致，不查是不是 Semi 用户。随手生成私钥即可反复让管理员钱包发 `createProfile` / `registerClass` / `mint`，也能给任意地址发冒充官方的徽章。签名 5 分钟内可重放（无 nonce）。修法：要求 Semi 登录态并校验签名地址是该用户的 `evm_chain_active_key`；按用户和 IP 限流、限额；管理员钱包少放钱并告警。
 - **Paymaster 押金可能被外人消耗**（待确认 ZeroDev 后台配置）。`VITE_ZERODEV_PROJECT_ID` 在客户端 bundle 里（已核实），paymaster 是 `selfFunded`。若 ZeroDev 后台没配 sponsor 策略（sender / 合约白名单、限额），任何人都能拿它为自己的 UserOp 付 gas。`gas_credits` 只是事后记账，不拦截。修法：先去控制台确认策略；更彻底是把 sponsor 放到服务端鉴权之后。
-- **`sync_wallet` 的链上校验实际失效**（已核实，`app/services/chain_rpc.rb`）。选择器常量已带 `0x`，`eth_call` 又拼一次，发出 `0x0xa0e67e2b`，调用失败后降级为信任前端传来的 owners / threshold。任一 owner 可改写后端镜像的成员列表和门限（链上资金不受影响）。修法：去掉重复前缀；失败时拒绝，不降级。
-- **`confirm_tx` 可以拿同一 Safe 的旧回执确认**（代理报告，`multisig_controller.rb` `confirm_tx`、`user_op_receipt.rb`）。`user_op_hash` 可选，也不核对回执里事件的 nonce，能把没执行的 owner 变更标成已执行，后端据此改成员和门限。修法：`user_op_hash` 必填并与快照重算值比对，核对 nonce，同一哈希只能确认一次。
-- **后端不验证多签签名**（代理报告，`submit_signature` 只查非空）。地址自报堵上之后（见已修复），只剩后端被攻破或绕过前端时的纵深防御价值。修法：`ecrecover` 恢复出的地址必须等于 `signer_address`，签的是快照的 SafeOp 哈希。
-- **验证码没有尝试次数和速率限制**（代理报告）。每次 `send_sms` 多一个同时有效的码、旧码不作废，邮箱验证码可在线爆破；`send_sms` 不校验手机号，可被刷短信费；验证码用 `rand` 生成。修法：每码限 5 次、发新码作废旧码、按 IP 与目标限流（Rails `rate_limit` 或 rack-attack）、`SecureRandom.random_number`、核销用条件 `update_all`。
-- **私钥和支付码打到浏览器控制台**（代理报告）：`pages/export.client.vue`（`console.log("privateKey", …)`）、`pages/badges/send/[class_id].vue`（支付码）、`pages/import.client.vue`（keystore）。浏览器扩展、错误上报、共用电脑都能读到。`/verify` 页和 `signinWithPassword` 的两处已随删除消失。修法：删日志。
 
 ### 中
 
