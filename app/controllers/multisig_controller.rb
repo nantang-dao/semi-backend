@@ -168,36 +168,23 @@ class MultisigController < ApplicationController
   end
 
   # POST /sync_multisig_wallet
-  # Sync owners/threshold — 后端从链上验证，前端仅触发
-  # params: wallet_id, owners (array of addresses), threshold
+  # 用链上真实的 owners / threshold 刷新后端镜像，数据由后端自己读链：
+  # 已部署读合约；未部署时生效的是初始配置（第一笔 UserOp 用它部署）。
+  # 读不到就报错，不降级 —— 曾经降级为信任前端，任一 owner 都能改写成员和门限。
+  #
+  # 前端传了 owners / threshold 时，要和后端读到的一致才写入。配置变更刚执行完，
+  # 后端的节点可能还落后一个块；这时不一致就报错，不拿旧状态覆盖 confirm_tx 刚写好的镜像。
+  # params: wallet_id, owners?, threshold?
   def sync_wallet
     wallet = find_multisig_wallet(params[:wallet_id])
     ensure_is_owner!(wallet)
 
-    chain_owners = Array(params[:owners]).map(&:downcase)
-    chain_threshold = params[:threshold].to_i
+    chain_owners, chain_threshold = effective_chain_config(wallet)
 
-    raise AppError.new("Invalid data from chain") if chain_owners.empty? || chain_threshold < 1
-
-    # 后端从链上验证 owners 和 threshold 的真实性
-    safe_address = wallet.evm_chain_address
-    chain_id = wallet.chain_id || wallet.chain.to_i
-    if safe_address.present?
-      begin
-        onchain_owners = ChainRpc.get_owners(safe_address, chain_id)
-        onchain_threshold = ChainRpc.get_threshold(safe_address, chain_id)
-
-        if onchain_owners.present?
-          # 验证前端提交的数据与链上一致
-          onchain_owners_normalized = onchain_owners.map(&:downcase).sort
-          chain_owners_normalized = chain_owners.sort
-          unless onchain_owners_normalized == chain_owners_normalized && onchain_threshold == chain_threshold
-            raise AppError.new("Submitted data does not match on-chain state")
-          end
-        end
-        # 如果链上读取失败（RPC 不可用），降级为信任前端数据（记录日志）
-      rescue => e
-        Rails.logger.warn("ChainRpc verification skipped for wallet #{wallet.id}: #{e.message}")
+    if params.key?(:owners) || params.key?(:threshold)
+      submitted_owners = Array(params[:owners]).map { |a| a.to_s.downcase }.sort
+      unless submitted_owners == chain_owners && params[:threshold].to_i == chain_threshold
+        raise AppError.new("Submitted data does not match on-chain state, try again later", code: "chain_mismatch")
       end
     end
 
@@ -862,6 +849,29 @@ class MultisigController < ApplicationController
   # 当门限或 owner 集合变更后，重新评估该钱包所有活跃交易的 status
   # 签名数已达当前门限的 signing 交易应升级为 ready
   # 原为 ready 但签名数不再满足当前门限的应降为 signing
+  # 这条钱包行在它那条链上实际生效的 owners（小写、排序）和门限
+  def effective_chain_config(wallet)
+    safe_address = wallet.evm_chain_address
+    chain_id = wallet.chain_id || wallet.chain.to_i
+    raise AppError.new("Wallet has no address", code: "chain_unavailable") if safe_address.blank?
+
+    if ChainRpc.deployed?(safe_address, chain_id)
+      owners = ChainRpc.get_owners(safe_address, chain_id)
+      threshold = ChainRpc.get_threshold(safe_address, chain_id)
+    else
+      owners = Array(wallet.initial_owners).map { |a| a.to_s.downcase }
+      threshold = wallet.initial_threshold.to_i
+    end
+    if owners.empty? || threshold < 1 || threshold > owners.length
+      raise AppError.new("Cannot determine the wallet's on-chain owners", code: "chain_unavailable")
+    end
+
+    [ owners.map(&:downcase).sort, threshold ]
+  rescue ChainRpc::Error => e
+    Rails.logger.warn("sync_wallet: chain read failed for wallet #{wallet.id}: #{e.message}")
+    raise AppError.new("Chain RPC unavailable, try again later", code: "chain_unavailable")
+  end
+
   def reassess_active_tx_statuses!(wallet)
     current_owner_addresses = wallet.wallet_owners.pluck(:owner_address).map { |a| a.to_s.downcase }
     current_threshold = wallet.threshold

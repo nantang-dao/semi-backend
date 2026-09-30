@@ -12,7 +12,7 @@
 2. 后端 `verify_userop_receipt!` 在链上校验回执；
 3. `apply_wallet_config_from_executed_tx!` 按 `call_detail` 增删 owner、改 threshold。
 
-另有 `sync_multisig_wallet` 从链上读 `getOwners`/`getThreshold` 全量覆盖，由 `pages/multisig/[id]`、`owners`、`queue` 页面触发。
+另有 `sync_multisig_wallet` 按链上状态全量覆盖：后端自己读（已部署读 `getOwners`/`getThreshold`，未部署用 `initial_owners`/`initial_threshold`），读不到就报 `chain_unavailable`，不降级。前端传了 owners / threshold 时必须和后端读到的一致（否则 `chain_mismatch`，不写入），防止配置变更刚执行完、后端节点还落后一个块时拿旧状态覆盖镜像。执行配置变更后由 `utils/multisig_execute.ts` 自动触发（带 owners），owners 页的「从链上同步」手动触发（不带）。
 
 ### 已知看不到的情况（有意不做兜底）
 
@@ -119,6 +119,18 @@ gas / paymaster 字段不在核对范围内。ERC20 的 `symbol` 是提案人填
 | `3mvk5f3qb4b4x` | Arbitrum | `0xd03b…` |
 
 保留：`0xab7b…` 的 Arbitrum 行（核对时已有 2 笔多签交易）和主网行（地址上有 0.0001 ETH，有人在测试）；`0xc0cf…` 的 Arbitrum、主网行（都有交易，主网已部署）。被删行的钱包之后仍可手动启用；`0x7ea2…` 成员变更过，按新规则不能再启用新链。
+
+### 2026-10：`sync_multisig_wallet` 采信前端数据
+
+**问题**：`ChainRpc.eth_call` 在已带 `0x` 的选择器前又拼了一次 `0x`，发出去的是 `0x0xa0e67e2b`，调用一直失败、返回空；空结果被当成「读不到」，降级为信任前端传来的 owners / threshold。即使 RPC 正常，`sync_wallet` 里的 `rescue => e` 也会把「与链上不一致」的 `AppError` 一并吞掉。结果：任一 owner 都能把后端镜像改成任意成员和门限——把自己的其他地址加进来看交易和成员手机号、把别人踢出列表、把门限调低让交易显示「可执行」（链上资金不受影响，签名不够 bundler 会拒）。降级逻辑是 `249ba92`（2026-06-04）加的，`0x0x` 从 `ChainRpc` 诞生起就在。由 2026-10 的安全审计发现。
+
+**修正**（2026-10-01）：
+
+- `ChainRpc`：去掉重复前缀；节点返回 `error`、没有响应、返回值读不懂都抛 `ChainRpc::Error`，不再返回空值；新增 `deployed?`（`eth_getCode`）。`get_transaction_receipt` 仍在失败时返回 nil，由 `confirm_tx` 重试后失败闭合。
+- `sync_wallet` 由后端读链决定写入什么，规则见上面「新 owner 如何看到钱包」。owners 页的手动同步不再在前端读链。
+- 测试用一个假的 JSON-RPC 节点，calldata 不对就报错，锁住 `0x0x` 这类问题。
+
+**生产核对**（2026-10-01，只读）：用修好的 `ChainRpc` 核对全部 15 个多签钱包行，镜像与生效配置全部一致（7 行读链上合约，8 行未部署、按初始配置），没有被改写过的迹象。
 
 ### 2026-10：签名前核对快照内容（修复盲签）
 

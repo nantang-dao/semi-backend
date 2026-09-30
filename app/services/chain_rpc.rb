@@ -3,6 +3,9 @@
 # 后端链上 RPC 调用服务，用于验证前端提交的链上数据真实性
 # 支持 Safe 合约的 getOwners / getThreshold / getTransactionReceipt
 class ChainRpc
+  # RPC 不可用、节点返回 error、返回值读不懂。调用方必须失败闭合，不能当成「没数据」。
+  class Error < StandardError; end
+
   ALCHEMY_API_KEY = ENV.fetch("ALCHEMY_API_KEY")
 
   # chain_id -> Alchemy RPC URL (same key as VITE_ALCHEMY_API_KEY in semi-app)
@@ -17,41 +20,49 @@ class ChainRpc
   SAFE_GET_OWNERS = "0xa0e67e2b"   # getOwners()
   SAFE_GET_THRESHOLD = "0xe75235b8" # getThreshold()
 
-  # 从链上读取 Safe 合约的 owner 列表
+  # 地址上有没有合约代码（Safe 是否已部署）
+  def self.deployed?(address, chain_id)
+    code = rpc_result(chain_id, "eth_getCode", [ address, "latest" ])
+    code.is_a?(String) && code.sub(/\A0x/, "").present?
+  end
+
+  # 从链上读取 Safe 合约的 owner 列表（小写）。地址上没有合约时返回值为空，按错误处理。
   def self.get_owners(safe_address, chain_id)
-    result = eth_call(safe_address, SAFE_GET_OWNERS, chain_id)
-    decode_address_array(result)
+    owners = decode_address_array(eth_call(safe_address, SAFE_GET_OWNERS, chain_id))
+    raise Error, "getOwners returned no owners for #{safe_address}" if owners.empty?
+    owners
   end
 
   # 从链上读取 Safe 合约的 threshold
   def self.get_threshold(safe_address, chain_id)
     result = eth_call(safe_address, SAFE_GET_THRESHOLD, chain_id)
-    # threshold 是 uint256，取前 32 字节
-    result[0, 64].to_i(16)
+    raise Error, "getThreshold returned #{result.inspect} for #{safe_address}" unless result.match?(/\A\h{64}\z/)
+    result.to_i(16)
   end
 
-  # 获取交易 receipt，验证交易是否真实执行
+  # 获取交易 receipt；还没上链或 RPC 暂时不可用都返回 nil，由调用方重试后失败闭合
   def self.get_transaction_receipt(tx_hash, chain_id)
-    response = rpc_request(chain_id, {
-      jsonrpc: "2.0",
-      method: "eth_getTransactionReceipt",
-      params: [tx_hash],
-      id: 1
-    })
-    response&.dig("result")
+    rpc_result(chain_id, "eth_getTransactionReceipt", [ tx_hash ])
+  rescue Error => e
+    Rails.logger.error("ChainRpc receipt lookup failed: #{e.message}")
+    nil
   end
 
   private
 
-  # eth_call 读取合约数据
+  # eth_call 读取合约数据，返回去掉 0x 的 hex。data 是带 0x 的完整 calldata
+  # （曾经在这里再拼一次 0x，发出去的是 0x0xa0e67e2b，调用一直失败）。
   def self.eth_call(to, data, chain_id)
-    response = rpc_request(chain_id, {
-      jsonrpc: "2.0",
-      method: "eth_call",
-      params: [{ to: to, data: "0x#{data}" }, "latest"],
-      id: 1
-    })
-    response&.dig("result")&.sub(/\A0x/, "") || ""
+    result = rpc_result(chain_id, "eth_call", [ { to: to, data: data }, "latest" ])
+    raise Error, "eth_call returned #{result.inspect}" unless result.is_a?(String) && result.match?(/\A0x\h*\z/)
+    result.delete_prefix("0x")
+  end
+
+  def self.rpc_result(chain_id, method, params)
+    response = rpc_request(chain_id, { jsonrpc: "2.0", method: method, params: params, id: 1 })
+    raise Error, "#{method} failed: no response" unless response.is_a?(Hash)
+    raise Error, "#{method} failed: #{response["error"]}" if response["error"]
+    response["result"]
   end
 
   # 解码 Solidity address[] 返回值
@@ -70,10 +81,10 @@ class ChainRpc
     addresses
   end
 
-  # 发送 JSON-RPC 请求
+  # 发送 JSON-RPC 请求；网络错误返回 nil
   def self.rpc_request(chain_id, payload)
     url = RPC_URLS[chain_id]
-    raise "No RPC URL configured for chain_id=#{chain_id}" unless url
+    raise Error, "No RPC URL configured for chain_id=#{chain_id}" unless url
 
     require "net/http"
     require "json"

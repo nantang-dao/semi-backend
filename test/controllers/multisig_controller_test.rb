@@ -1,4 +1,5 @@
 require "test_helper"
+require "minitest/mock"
 
 class MultisigControllerTest < ActionDispatch::IntegrationTest
   ALICE = "0x1111111111111111111111111111111111111111"
@@ -287,6 +288,72 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
     }, headers: auth, as: :json
     assert_response :bad_request
     assert_equal "intent_mismatch", body["code"]
+  end
+
+  # 假的 JSON-RPC 节点：按 method 和 calldata 回答，calldata 不对（比如 0x0x 前缀）就报错，
+  # 和真节点一样。owners: nil 表示地址上没有合约。
+  def fake_chain(owners:, threshold: 1, down: false)
+    lambda do |_chain_id, payload|
+      next nil if down
+      params = payload[:params]
+      result =
+        case [ payload[:method], params.first.is_a?(Hash) ? params.first[:data] : nil ]
+        when [ "eth_getCode", nil ] then owners ? "0x6080" : "0x"
+        when [ "eth_call", ChainRpc::SAFE_GET_OWNERS ]
+          next { "result" => "0x" } unless owners
+          words = [ 32, owners.length ] + owners.map { |a| a.delete_prefix("0x").to_i(16) }
+          "0x" + words.map { |w| w.to_s(16).rjust(64, "0") }.join
+        when [ "eth_call", ChainRpc::SAFE_GET_THRESHOLD ] then "0x" + threshold.to_s(16).rjust(64, "0")
+        else next { "error" => { "code" => -32602, "message" => "invalid params #{params.inspect}" } }
+        end
+      { "result" => result }
+    end
+  end
+
+  def sync(wallet_id, chain, **submitted)
+    ChainRpc.stub(:rpc_request, chain) do
+      post "/sync_multisig_wallet", params: { wallet_id: wallet_id, **submitted }, headers: auth, as: :json
+    end
+  end
+
+  test "sync writes the owners and threshold read from chain" do
+    wallet_id = create_wallet(chain_ids: [ 10 ]).first["id"]
+    sync(wallet_id, fake_chain(owners: [ ALICE, BOB, CAROL ], threshold: 1))
+    assert_response :success, @response.body
+    wallet = Wallet.find(wallet_id)
+    assert_equal [ ALICE, BOB, CAROL ], wallet.owner_address_list.sort
+    assert_equal 1, wallet.threshold
+  end
+
+  test "sync refuses submitted owners that differ from chain" do
+    wallet_id = create_wallet(chain_ids: [ 10 ]).first["id"]
+    sync(wallet_id, fake_chain(owners: [ ALICE, BOB ], threshold: 2), owners: [ ALICE, CAROL ], threshold: 1)
+    assert_equal "chain_mismatch", body["code"]
+    wallet = Wallet.find(wallet_id)
+    assert_equal [ ALICE, BOB ], wallet.owner_address_list.sort
+    assert_equal 2, wallet.threshold
+  end
+
+  test "sync accepts submitted owners that match chain" do
+    wallet_id = create_wallet(chain_ids: [ 10 ]).first["id"]
+    sync(wallet_id, fake_chain(owners: [ ALICE, BOB ], threshold: 1), owners: [ BOB.upcase.sub("0X", "0x"), ALICE ], threshold: 1)
+    assert_response :success, @response.body
+    assert_equal 1, Wallet.find(wallet_id).threshold
+  end
+
+  test "sync uses the initial config when the Safe is not deployed" do
+    wallet_id = create_wallet(chain_ids: [ 10 ]).first["id"]
+    Wallet.find(wallet_id).update!(threshold: 1)
+    sync(wallet_id, fake_chain(owners: nil))
+    assert_response :success, @response.body
+    assert_equal 2, Wallet.find(wallet_id).threshold
+  end
+
+  test "sync fails closed when the chain cannot be read" do
+    wallet_id = create_wallet(chain_ids: [ 10 ]).first["id"]
+    sync(wallet_id, fake_chain(owners: nil, down: true), owners: [ ALICE ], threshold: 1)
+    assert_equal "chain_unavailable", body["code"]
+    assert_equal [ ALICE, BOB ], Wallet.find(wallet_id).owner_address_list.sort
   end
 
   test "the owner who locked a tx can release it immediately, others must wait" do
