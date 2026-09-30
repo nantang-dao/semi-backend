@@ -33,7 +33,6 @@ class MultisigTransaction < ApplicationRecord
         signer_address: sig.signer_address,
         signature: sig.signature,
         signer_handle: user&.handle,
-        signer_phone: user&.phone,
         signer_image_url: user&.image_url
       }
     end
@@ -68,7 +67,7 @@ class MultisigTransaction < ApplicationRecord
       user = wo.user
       entry = {
         address: wo.owner_address,
-        name: user&.handle || user&.phone,
+        name: user&.handle,
         signed: signed_addresses.include?(addr)
       }
       if signed_addresses.include?(addr)
@@ -80,7 +79,7 @@ class MultisigTransaction < ApplicationRecord
     # 保存发起人信息
     proposer_user = User.find_by(id: proposer_id)
     proposer_entry = if proposer_user
-      { id: proposer_id, address: proposer_user.evm_chain_active_key, name: proposer_user.handle || proposer_user.phone }
+      { id: proposer_id, address: proposer_user.evm_chain_active_key, name: proposer_user.handle }
     else
       { id: proposer_id }
     end

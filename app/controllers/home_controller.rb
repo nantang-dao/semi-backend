@@ -1,4 +1,6 @@
 class HomeController < ApplicationController
+  # 别人能看到的用户字段。手机号、邮箱、gas 额度只在 get_me 里给本人
+  PUBLIC_USER_FIELDS = %i[id handle image_url evm_chain_address evm_chain_active_key can_send_badge].freeze
   PHONE_FORMAT = /\A\d{11}\z/ # 与前端 login.client.vue 一致，短信通道只发国内手机号
 
   def index
@@ -128,14 +130,16 @@ class HomeController < ApplicationController
         user = alias_record.user
         renamed_from = query
       else
-        user = User.find_by(phone: query) ||
-               User.where("LOWER(evm_chain_address) = ?", query.downcase).first ||
+        user = User.where("LOWER(evm_chain_address) = ?", query.downcase).first ||
                User.where("LOWER(evm_chain_active_key) = ?", query.downcase).first
+        # 按手机号查（转账给手机号）只对登录用户开放：不登录就能拿手机号去试出对应的钱包地址
+        user ||= User.find_by(phone: query) if current_user
       end
     end
     raise AppError.new("User Not Found") unless user
 
-    json = user.as_json(only: [:id, :handle, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :can_send_badge])
+    # 不返回手机号、邮箱：调用方只用地址和用户名（问的人本来就知道手机号）
+    json = user.as_json(only: PUBLIC_USER_FIELDS)
     json["renamed_from"] = renamed_from if renamed_from
     render json: json
   end
@@ -144,7 +148,7 @@ class HomeController < ApplicationController
     user = User.find_by(id: params[:id])
     raise AppError.new("User Not Found") unless user
 
-    render json: user.as_json(only: [:id, :handle, :email, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :remaining_gas_credits, :total_used_gas_credits, :can_send_badge])
+    render json: user.as_json(only: PUBLIC_USER_FIELDS)
   end
 
   def get_me
@@ -324,6 +328,8 @@ class HomeController < ApplicationController
   def get_contacts
     user = User.find_by(id: params[:id])
     raise AppError.new("User Not Found") unless user
+    raise AppError.new("Invalid Auth Token") unless user == current_user
+
     render json: { result: "ok", contacts: user.contact_list }
   end
 

@@ -56,6 +56,54 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
     assert_equal 3, body["wallets"].length
   end
 
+  test "wallet owners are visible to members of the Safe on any chain, without phone numbers" do
+    @alice.update!(phone: "13800000010")
+    wallets = create_wallet(chain_ids: [ 10, 42161 ])
+    arb = Wallet.find(wallets.last["id"])
+    arb.wallet_owners.where(owner_address: BOB).destroy_all # Bob 在 Arbitrum 上已被移除
+
+    get "/get_multisig_wallet_owners", params: { wallet_id: arb.id }, headers: auth(@bob_token)
+    assert_response :success, @response.body
+    assert_equal [ ALICE ], body["owners"].map { |o| o["owner_address"] }
+    assert_not body["owners"].first.key?("phone")
+
+    carol = User.create!(evm_chain_active_key: CAROL, handle: "carol-#{SecureRandom.hex(3)}")
+    get "/get_multisig_wallet_owners", params: { wallet_id: arb.id }, headers: auth(AuthToken.create!(user: carol).token)
+    assert_equal "You are not an owner of this wallet", body["message"]
+  end
+
+  test "owner names come from handles, not from the proposal or phone numbers" do
+    @bob.update!(phone: "13800000011", handle: nil)
+    wallets = create_wallet(chain_ids: [ 10 ])
+    detail = REMOVE_BOB.merge(owner_name: "Trusted Alice")
+    post "/propose_multisig_tx", params: {
+      wallet_id: wallets.first["id"], tx_type: "remove_owner", call_detail: detail, evm_call_data: call_data("remove_owner", REMOVE_BOB)
+    }, headers: auth, as: :json
+    assert_response :success, @response.body
+    assert_not body["tx"]["call_detail"].key?("owner_name")
+    assert_not MultisigTransaction.find(body["tx"]["id"]).call_detail.key?("owner_name")
+    assert_equal @alice.handle, body["tx"]["proposer"]["name"]
+
+    @bob.update!(handle: "bob-renamed")
+    get "/get_multisig_tx", params: { id: body["tx"]["id"] }, headers: auth
+    assert_equal "bob-renamed", body["tx"]["call_detail"]["owner_name"]
+    assert_not @response.body.include?("13800000011")
+  end
+
+  test "stored owner snapshots with phone names are cleaned on read" do
+    wallets = create_wallet(chain_ids: [ 10 ])
+    tx = MultisigTransaction.create!(
+      wallet_id: wallets.first["id"], proposer: @alice, chain_id: 10, tx_type: "change_threshold",
+      call_detail: THRESHOLD_1.merge(new_owner_name: "13800000012"), evm_call_data: call_data("change_threshold", THRESHOLD_1),
+      threshold_at_creation: 2, status: "executed", expires_at: 5.days.from_now,
+      owner_snapshot: { owners: [ { address: BOB, name: "13800000012", signed: true } ], proposer: { id: @alice.id, name: "13800000012" } }
+    )
+    get "/get_multisig_tx", params: { id: tx.id }, headers: auth
+    assert_response :success, @response.body
+    assert_not @response.body.include?("13800000012")
+    assert_equal @bob.handle, body["tx"]["owner_snapshot"]["owners"].first["name"]
+  end
+
   test "rejects mixing mainnet and testnet chains" do
     post "/create_multisig_wallet", params: {
       name: "Team", chain_id: 10, chain_ids: [ 10, 11155111 ],

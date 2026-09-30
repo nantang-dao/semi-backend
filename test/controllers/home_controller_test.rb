@@ -231,11 +231,30 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert_nil user.reload.evm_chain_active_key
   end
 
-  test "should get user" do
-    user = User.create(phone: "1234567890")
+  test "get_user returns only public fields" do
+    user = User.create!(phone: "13800000000", email: "a@example.com", handle: "public-alice")
     get get_user_url, params: { id: user.id }
     assert_response :success
-    assert JSON.parse(@response.body)["phone"] == "1234567890"
+    assert_equal({ "id" => user.id, "handle" => "public-alice", "image_url" => nil, "evm_chain_address" => nil,
+                   "evm_chain_active_key" => nil, "can_send_badge" => user.can_send_badge }, JSON.parse(@response.body))
+  end
+
+  test "get_by_handle finds by phone only for signed-in users and never returns the phone" do
+    target = User.create!(phone: "13800000001", handle: "phone-target", evm_chain_address: "0x" + "ab" * 20)
+    get get_by_handle_url, params: { handle: "13800000001" }
+    assert_equal "User Not Found", JSON.parse(@response.body)["message"]
+
+    me = User.create!(phone: "13800000002")
+    get get_by_handle_url, params: { handle: "13800000001" }, headers: { "Authorization" => "Bearer #{me.gen_auth_token}" }
+    assert_response :success
+    body = JSON.parse(@response.body)
+    assert_equal target.id, body["id"]
+    assert_equal "0x" + "ab" * 20, body["evm_chain_address"]
+    assert_not body.key?("phone")
+
+    get get_by_handle_url, params: { handle: "phone-target" }
+    assert_equal target.id, JSON.parse(@response.body)["id"]
+    assert_not JSON.parse(@response.body).key?("phone")
   end
 
   test "should get me" do
@@ -430,6 +449,9 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert_equal contact_list, user.contact_list
 
     get get_contacts_url, params: { id: user.id }
+    assert_equal "Invalid Auth Token", JSON.parse(@response.body)["message"]
+
+    get get_contacts_url, params: { id: user.id }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
     assert_response :success
     assert_equal "ok", JSON.parse(@response.body)["result"]
     assert_equal contact_list, JSON.parse(@response.body)["contacts"]

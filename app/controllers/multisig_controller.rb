@@ -149,8 +149,12 @@ class MultisigController < ApplicationController
   end
 
   # GET /get_multisig_wallet_owners?wallet_id=xxx
+  # 只对这个 Safe 的成员开放 —— 任一链上是成员即可：多链发起成员变更时，
+  # 前端会查每条链的行，包括自己在那条链上已被移除的行，再自行跳过。
+  # 不返回手机号，成员没设用户名时前端显示地址。
   def get_wallet_owners
     wallet = find_multisig_wallet(params[:wallet_id])
+    ensure_is_owner_on_any_chain!(wallet)
     owners = wallet.wallet_owners.order(:position).map do |wo|
       user = wo.user
       {
@@ -159,7 +163,6 @@ class MultisigController < ApplicationController
         position: wo.position,
         user_id: wo.user_id,
         handle: user&.handle,
-        phone: user&.phone,
         image_url: user&.image_url
       }
     end
@@ -239,8 +242,8 @@ class MultisigController < ApplicationController
       end
     end
 
-    # 为配置类交易补充地址对应的名字到 call_detail
-    call_detail = enrich_call_detail_names(call_detail, wallet)
+    # 名字不入库：读取时按地址现查（serialize_tx），提案人自带的名字字段丢掉
+    call_detail = strip_owner_names(call_detail)
 
     replaces_tx = nil
     if replaces_tx_id.present?
@@ -390,7 +393,7 @@ class MultisigController < ApplicationController
     txs = []
     ActiveRecord::Base.transaction do
       items.each do |i|
-        call_detail = enrich_call_detail_names(i[:call_detail], i[:wallet])
+        call_detail = strip_owner_names(i[:call_detail])
         txs << create_queued_tx!(i[:wallet], i[:tx_type], call_detail, i[:evm_call_data], memo: memo, group_id: group_id)
       end
     end
@@ -765,34 +768,58 @@ class MultisigController < ApplicationController
     "change_threshold" => "0x694e80c3" # changeThreshold(uint256)
   }.freeze
 
-  # 为 call_detail 中的地址补充对应的名字
-  # 从全局用户表搜索，确保 add_owner/replace_owner 的新 owner 名字也能显示
-  def enrich_call_detail_names(call_detail, wallet)
-    detail = call_detail.is_a?(Hash) ? call_detail.with_indifferent_access : {}
-    address_fields = [:new_owner, :old_owner, :owner]
-    owner_map = wallet.wallet_owners.index_by { |wo| wo.owner_address.downcase }
+  OWNER_ADDRESS_FIELDS = %w[new_owner old_owner owner].freeze
+  OWNER_NAME_FIELDS = OWNER_ADDRESS_FIELDS.map { |f| "#{f}_name" }.freeze
 
-    address_fields.each do |field|
-      addr = detail[field].to_s.downcase.strip
-      next if addr.blank?
-      next if detail["#{field}_name"].present? # 已有名字则跳过
+  # 提案人可以在 call_detail 里带 new_owner_name 之类的字段，页面会优先显示它 ——
+  # 攻击者的地址就能显示成「Alice」。名字一律由后端读取时按地址现查。
+  def strip_owner_names(call_detail)
+    detail = call_detail.is_a?(Hash) ? call_detail.to_h.stringify_keys : {}
+    detail.except(*OWNER_NAME_FIELDS)
+  end
 
-      # 1. 从当前钱包 owner 列表找
-      wo = owner_map[addr]
-      if wo&.user
-        detail["#{field}_name"] = wo.user.handle || wo.user.phone
-        next
-      end
+  # 地址 → 用户名（没设用户名就没有名字，前端显示地址）。不用手机号兜底。
+  def handles_by_address(addresses)
+    addrs = addresses.compact.map { |a| a.to_s.downcase }.uniq
+    return {} if addrs.empty?
 
-      # 2. 从全局用户表找
-      user = User.find_by("LOWER(evm_chain_active_key) = ?", addr)
-      if user
-        detail["#{field}_name"] = user.handle || user.phone
-        next
-      end
+    User.where("LOWER(evm_chain_active_key) IN (?)", addrs).where.not(handle: [ nil, "" ])
+        .to_h { |u| [ u.evm_chain_active_key.downcase, u.handle ] }
+  end
+
+  def call_detail_with_names(call_detail)
+    detail = strip_owner_names(call_detail)
+    names = handles_by_address(OWNER_ADDRESS_FIELDS.map { |f| detail[f] })
+    OWNER_ADDRESS_FIELDS.each do |f|
+      name = names[detail[f].to_s.downcase]
+      detail["#{f}_name"] = name if name
     end
+    detail
+  end
 
-    detail.to_h
+  # 终态交易冻结的成员快照里，旧数据的 name 可能是手机号或提案人自带的名字，读取时重算
+  def owner_snapshot_with_names(snapshot, proposer)
+    return snapshot if snapshot.blank?
+
+    owners = snapshot.is_a?(Array) ? snapshot : Array(snapshot["owners"] || snapshot[:owners])
+    names = handles_by_address(owners.map { |e| e["address"] || e[:address] })
+    owners = owners.map do |e|
+      entry = e.to_h.stringify_keys
+      entry["name"] = names[entry["address"].to_s.downcase]
+      entry
+    end
+    return owners if snapshot.is_a?(Array)
+
+    result = snapshot.to_h.stringify_keys.merge("owners" => owners)
+    result["proposer"] = result["proposer"].to_h.merge("name" => proposer&.handle) if result["proposer"]
+    result
+  end
+
+  def ensure_is_owner_on_any_chain!(wallet)
+    me = current_user.evm_chain_active_key&.downcase
+    rows = Wallet.multisig_at(wallet.evm_chain_address)
+    member = me.present? && WalletOwner.where(wallet_id: rows.select(:id)).where("LOWER(owner_address) = ?", me).exists?
+    raise AppError.new("You are not an owner of this wallet") unless member
   end
 
   def wallet_owner_addresses(wallet)
@@ -1126,7 +1153,7 @@ class MultisigController < ApplicationController
     # 发起人信息
     proposer = User.find_by(id: tx.proposer_id)
     proposer_info = if proposer
-      { id: proposer.id, address: proposer.evm_chain_active_key, name: proposer.handle || proposer.phone }
+      { id: proposer.id, address: proposer.evm_chain_active_key, name: proposer.handle }
     else
       { id: tx.proposer_id, address: nil, name: nil }
     end
@@ -1140,7 +1167,7 @@ class MultisigController < ApplicationController
       queue_position: tx.queue_position,
       nonce: tx.nonce,
       tx_type: tx.tx_type,
-      call_detail: tx.call_detail,
+      call_detail: call_detail_with_names(tx.call_detail),
       evm_call_data: tx.evm_call_data,
       threshold_at_creation: tx.threshold_at_creation,
       current_threshold: current_threshold,
@@ -1152,7 +1179,7 @@ class MultisigController < ApplicationController
       signature_count: display_signature_count,
       eligible_signature_count: display_eligible_count,
       signer_addresses: signer_addresses,
-      owner_snapshot: tx.owner_snapshot,
+      owner_snapshot: owner_snapshot_with_names(tx.owner_snapshot, proposer),
       memo: tx.memo,
       sender_note: tx.sender_note,
       executor_id: tx.executor_id,
