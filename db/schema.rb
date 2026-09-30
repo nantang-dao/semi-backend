@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_10_01_000004) do
+ActiveRecord::Schema[8.0].define(version: 2026_10_01_000005) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -212,6 +212,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_10_01_000004) do
     t.datetime "updated_at", null: false
     t.integer "decimals", default: 18
     t.integer "chain_id", default: 0
+    t.boolean "listed", default: false, null: false
   end
 
   create_table "transactions", force: :cascade do |t|

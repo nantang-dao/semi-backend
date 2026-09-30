@@ -27,6 +27,7 @@ Rails.application.routes.draw do
   post "set_transaction_note" => "home#set_transaction_note"
   get  "get_token_classes" => "home#get_token_classes"
   post "add_token_class" => "home#add_token_class"
+  post "set_token_class_listed" => "home#set_token_class_listed"
   post "add_wallet" => "home#add_wallet"
   get  "get_wallets" => "home#get_wallets"
   post "remove_wallet" => "home#remove_wallet"

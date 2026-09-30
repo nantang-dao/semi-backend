@@ -273,8 +273,22 @@ class HomeController < ApplicationController
     render json: { result: "ok" }
   end
 
+  # 全局列表只有已上架的代币，加上当前用户自己加的（未上架也能看到自己部署的币）。
+  # 曾经任何人加的币都会出现在所有人的列表里，比如一个假的 USDC。
   def get_token_classes
-    render json: { result: "ok", token_classes: TokenClass.order(position: :desc).all }
+    scope = TokenClass.where(listed: true)
+    scope = scope.or(TokenClass.where(publisher: current_user.id)) if current_user
+    render json: { result: "ok", token_classes: scope.order(position: :desc) }
+  end
+
+  # POST /set_token_class_listed —— 仅管理员（ADMIN_USER_IDS）
+  def set_token_class_listed
+    ensure_admin!
+    token_class = TokenClass.find_by(id: params[:id])
+    raise AppError.new("Token class not found") unless token_class
+
+    token_class.update!(listed: ActiveModel::Type::Boolean.new.cast(params[:listed]) == true)
+    render json: { result: "ok", token_class: token_class }
   end
 
   def add_token_class
@@ -290,6 +304,8 @@ class HomeController < ApplicationController
   def add_wallet
     user = current_user
     raise AppError.new("User Not Found") unless user
+    # 多签钱包只能走 create_multisig_wallet（校验地址与成员）；这里建的行没有任何校验
+    raise AppError.new("Use create_multisig_wallet for multisig wallets") if params[:wallet_type].to_s == "multisig"
 
     wallet = user.wallets.create(name: params[:name], wallet_type: params[:wallet_type], chain: params[:chain], evm_chain_address: params[:evm_chain_address], evm_chain_active_key: params[:evm_chain_active_key], encrypted_keys: params[:encrypted_keys], format: params[:format])
     render json: { result: "ok", wallet: wallet.as_json(only: [:id, :name, :wallet_type, :chain, :evm_chain_address, :evm_chain_active_key, :encrypted_keys, :format]) }

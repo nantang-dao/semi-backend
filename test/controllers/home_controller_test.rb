@@ -442,6 +442,41 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert JSON.parse(@response.body).key?("token_classes")
   end
 
+  test "user-added tokens are visible only to their publisher until an admin lists them" do
+    publisher = User.create!(phone: "13800000040")
+    other = User.create!(phone: "13800000041")
+    admin = User.create!(phone: "13800000042")
+    post add_token_class_url, params: { token_type: "ERC20", chain: "optimism", chain_id: 10, address: "0x" + "0b" * 20, name: "USD Coin", symbol: "USDC", decimals: 6 },
+                              headers: { "Authorization" => "Bearer #{publisher.gen_auth_token}" }
+    fake = TokenClass.find_by(symbol: "USDC")
+    assert_not fake.listed
+
+    symbols = ->(user = nil) {
+      get get_token_classes_url, headers: user ? { "Authorization" => "Bearer #{user.gen_auth_token}" } : {}
+      JSON.parse(@response.body)["token_classes"].map { |t| t["symbol"] }
+    }
+    assert_includes symbols.(publisher), "USDC"
+    assert_not_includes symbols.(other), "USDC"
+    assert_not_includes symbols.(), "USDC"
+
+    post "/set_token_class_listed", params: { id: fake.id, listed: true }, headers: { "Authorization" => "Bearer #{other.gen_auth_token}" }
+    assert_equal "forbidden", JSON.parse(@response.body)["code"]
+
+    ENV["ADMIN_USER_IDS"] = admin.id
+    post "/set_token_class_listed", params: { id: fake.id, listed: true }, headers: { "Authorization" => "Bearer #{admin.gen_auth_token}" }
+    assert_response :success
+    assert_includes symbols.(other), "USDC"
+  ensure
+    ENV.delete("ADMIN_USER_IDS")
+  end
+
+  test "add_wallet refuses multisig rows" do
+    user = User.create!(phone: "13800000043")
+    post add_wallet_url, params: { name: "x", wallet_type: "multisig", evm_chain_address: "0x" + "0c" * 20 }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    assert_response :bad_request
+    assert_equal 0, Wallet.where(wallet_type: "multisig", user_id: user.id).count
+  end
+
   test "should add wallet" do
     user = User.create(phone: "1234567890")
     post add_wallet_url, params: { name: "Test Wallet", wallet_type: "evm", chain: "ethereum", evm_chain_address: "0x1234567890", evm_chain_active_key: "0x1234567890", encrypted_keys: "encrypted_data", format: "json" }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
