@@ -1,0 +1,44 @@
+test/controllers/multisig_controller_test.rb
+  s_21c523732de41d::t_cf3730ece22b87 5-10,228-234,237-238,261,263,269-359
+  s_21c523732de41d::t_137ce5001255bc 360
+app/services/user_op_receipt.rb
+  s_21c523732de41d::t_0e7250bfdb695f 23-24,27-29,35-36,39-42
+test/test_helper.rb
+  s_21c523732de41d::t_dec548116ca85d 10-12,17-34
+  s_21c523732de41d::t_e34b0f42c9c860 35
+test/fixtures/files/safe_op_vectors.json
+  s_21c523732de41d::t_be0b790a5658f4 1-6,8-22,24,27-29,31-33,35-42,44-52,54,57-59,61-63,65-68
+  s_21c523732de41d::t_6501c80e47a52a 7,23,25-26,30,34,43,53,55-56,60,64
+app/controllers/multisig_controller.rb
+  s_21c523732de41d::t_65563c379b89a9 544,546-550,567-573,1063
+  s_21c523732de41d::t_a10a76e2e9bb12 458,497-500,867-882
+test/services/user_op_receipt_test.rb
+  s_21c523732de41d::t_0e7250bfdb695f 21,28,35,41,44-48,68,74
+docs/multisig.md
+  s_21c523732de41d::t_528eb221e422b4 72-73,80
+  s_21c523732de41d::t_8056be2fb5ae3b 158,166-185
+  s_21c523732de41d::t_3489c8704179fd 153-157,159-165
+app/services/safe_op.rb
+  s_21c523732de41d::t_8061409a152f07 81
+  s_21c523732de41d::t_5038e5b803cbb4 1-30,32-80,82-108,111-114
+  s_21c523732de41d::t_11938b38b577b7 31,109-110
+test/services/safe_op_test.rb
+  s_21c523732de41d::t_5a785f315db625 1-38,46-61
+  s_21c523732de41d::t_a5feb5cba53396 39-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "f17f2c3b4cccc41d6316dee64e327929dd099739",
+  "prompts": {},
+  "sessions": {
+    "s_21c523732de41d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7cce0af7-aa66-434c-92bc-b50481bff78b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
