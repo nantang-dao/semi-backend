@@ -143,6 +143,8 @@ class OauthController < ApplicationController
       owner: user
     )
     render json: { result: "ok", application: app_json(app), client_secret: raw_secret }, status: 201
+  rescue ActiveRecord::RecordInvalid => e
+    raise invalid_application(e.record)
   end
 
   # GET /oauth/applications
@@ -174,6 +176,8 @@ class OauthController < ApplicationController
       status:         params.fetch(:status,         app.status)
     )
     render json: { result: "ok", application: app_json(app) }
+  rescue ActiveRecord::RecordInvalid => e
+    raise invalid_application(e.record)
   end
 
   # DELETE /oauth/applications/:id
@@ -214,6 +218,10 @@ class OauthController < ApplicationController
   end
 
   private
+
+  def invalid_application(app)
+    AppError.new(app.errors.full_messages.join("; "), code: "invalid_application")
+  end
 
   def authenticate_client!(app, secret)
     raise AppError.new("client_secret required") if secret.blank?
