@@ -237,8 +237,8 @@ class MultisigController < ApplicationController
     sender_note = params[:sender_note].to_s.strip.presence
     expires_at = 5.days.from_now
 
-    # 验证配置类交易的 callData 函数选择器与 tx_type 匹配
-    validate_config_calldata!(tx_type, evm_call_data, call_detail)
+    # evm_call_data 必须就是 call_detail（页面展示给签名人的内容）编码出来的调用
+    MultisigIntent.validate_proposal!(tx_type, call_detail, evm_call_data)
 
     # owner 变更必须同时发到所有适用的链，走 propose_multisig_tx_group
     if CONFIG_TX_SELECTORS.key?(tx_type)
@@ -303,9 +303,18 @@ class MultisigController < ApplicationController
         user_op_snapshot = params[:user_op_snapshot]
         raise AppError.new("user_op_snapshot is required for cancel transactions") if user_op_snapshot.blank?
 
-        snapshot_data = user_op_snapshot.is_a?(Hash) ? user_op_snapshot.to_unsafe_h : user_op_snapshot
-        snapshot_nonce = snapshot_data[:nonce].to_s
-        raise AppError.new("Cancel snapshot nonce must match the target transaction nonce") unless snapshot_nonce == replaces_tx.nonce.to_s
+        snapshot_data = user_op_snapshot.respond_to?(:to_unsafe_h) ? user_op_snapshot.to_unsafe_h : user_op_snapshot
+        # 拒签快照必须是「对 Safe 自身的空调用」、且沿用目标交易的 nonce——否则展示的是
+        # 「拒绝」，签下去的却可以是任意操作。
+        MultisigIntent.validate_snapshot!(
+          snapshot_data,
+          safe_address: wallet.evm_chain_address,
+          chain_id: wallet.multisig_chain_id,
+          nonce: replaces_tx.nonce,
+          tx_type: "cancel",
+          call_detail: call_detail,
+          evm_call_data: evm_call_data
+        )
 
         call_detail = call_detail.merge("replaces_tx_id" => replaces_tx.id)
 
@@ -357,7 +366,7 @@ class MultisigController < ApplicationController
       raise AppError.new("Only owner changes can be proposed as a group") unless CONFIG_TX_SELECTORS.key?(tx_type)
       call_detail = entry[:call_detail].respond_to?(:to_unsafe_h) ? entry[:call_detail].to_unsafe_h : (entry[:call_detail] || {})
       evm_call_data = entry[:evm_call_data].to_s
-      validate_config_calldata!(tx_type, evm_call_data, call_detail)
+      MultisigIntent.validate_proposal!(tx_type, call_detail, evm_call_data)
       { wallet: wallet, tx_type: tx_type, call_detail: call_detail, evm_call_data: evm_call_data }
     end
 
@@ -477,7 +486,17 @@ class MultisigController < ApplicationController
         raise AppError.new("nonce is required for first signature") if nonce.blank?
         raise AppError.new("user_op_snapshot is required for first signature") if user_op_snapshot.blank?
 
-        snapshot_data = user_op_snapshot.is_a?(Hash) ? user_op_snapshot.to_unsafe_h : user_op_snapshot
+        snapshot_data = user_op_snapshot.respond_to?(:to_unsafe_h) ? user_op_snapshot.to_unsafe_h : user_op_snapshot
+        # 后面的签名人签的都是这份快照，它必须就是提案展示的那笔交易
+        MultisigIntent.validate_snapshot!(
+          snapshot_data,
+          safe_address: wallet.evm_chain_address,
+          chain_id: tx.chain_id,
+          nonce: nonce,
+          tx_type: tx.tx_type,
+          call_detail: tx.call_detail,
+          evm_call_data: tx.evm_call_data
+        )
 
         tx.update!(
           status: "signing",
@@ -735,7 +754,7 @@ class MultisigController < ApplicationController
     wallet.update!(threshold: new_threshold)
   end
 
-  # 验证配置类交易的 callData 函数选择器与 tx_type 匹配
+  # 配置类交易（owner / 门限变更）。calldata 的逐字段校验在 MultisigIntent。
   # Safe v1.4.1 函数选择器
   CONFIG_TX_SELECTORS = {
     "add_owner" => "0x0d582f13",      # addOwnerWithThreshold(address,uint256)
@@ -772,33 +791,6 @@ class MultisigController < ApplicationController
     end
 
     detail.to_h
-  end
-
-  def validate_config_calldata!(tx_type, evm_call_data, call_detail)
-    return unless CONFIG_TX_SELECTORS.key?(tx_type)
-
-    expected_selector = CONFIG_TX_SELECTORS[tx_type]
-    actual_selector = evm_call_data&.[](0, 10) || ""
-
-    unless actual_selector.downcase == expected_selector.downcase
-      raise AppError.new("callData function selector does not match tx_type #{tx_type}: expected #{expected_selector}, got #{actual_selector}")
-    end
-
-    # 验证 call_detail 中关键字段不为空
-    detail = call_detail.is_a?(Hash) ? call_detail.with_indifferent_access : {}
-    case tx_type
-    when "add_owner"
-      raise AppError.new("call_detail.new_owner is required") if detail[:new_owner].blank?
-      raise AppError.new("call_detail.new_threshold is required") if detail[:new_threshold].blank?
-    when "remove_owner"
-      raise AppError.new("call_detail.owner is required") if detail[:owner].blank?
-      raise AppError.new("call_detail.new_threshold is required") if detail[:new_threshold].blank?
-    when "replace_owner"
-      raise AppError.new("call_detail.old_owner is required") if detail[:old_owner].blank?
-      raise AppError.new("call_detail.new_owner is required") if detail[:new_owner].blank?
-    when "change_threshold"
-      raise AppError.new("call_detail.new_threshold is required") if detail[:new_threshold].blank?
-    end
   end
 
   def wallet_owner_addresses(wallet)

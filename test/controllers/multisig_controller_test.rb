@@ -6,10 +6,14 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
   CAROL = "0x3333333333333333333333333333333333333333"
   SAFE = "0x53d961df57ccd0da6e6d6eae3377d4ea5b3f273d"
 
-  # addOwnerWithThreshold / removeOwner / changeThreshold 的选择器 + 占位参数
-  ADD_OWNER_DATA = "0x0d582f13#{"0" * 128}"
-  REMOVE_OWNER_DATA = "0xf8dc5dd9#{"0" * 192}"
-  CHANGE_THRESHOLD_DATA = "0x694e80c3#{"0" * 64}"
+  ADD_CAROL = { new_owner: CAROL, new_threshold: 2 }.freeze
+  REMOVE_BOB = { owner: BOB, prev_owner: ALICE, new_threshold: 1 }.freeze
+  THRESHOLD_1 = { new_threshold: 1 }.freeze
+
+  # 按 call_detail 编码的真实 calldata（后端要求两者一致，编码本身由 multisig_intent_test 锁住）
+  def call_data(tx_type, detail)
+    "0x" + MultisigIntent.config_call_data(tx_type, detail.with_indifferent_access)
+  end
 
   setup do
     @alice = User.create!(evm_chain_active_key: ALICE, handle: "alice-#{SecureRandom.hex(3)}")
@@ -114,7 +118,7 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
     wallets = create_wallet(chain_ids: [ 10 ])
     post "/propose_multisig_tx", params: {
       wallet_id: wallets.first["id"], tx_type: "change_threshold",
-      call_detail: { new_threshold: 1 }, evm_call_data: CHANGE_THRESHOLD_DATA
+      call_detail: THRESHOLD_1, evm_call_data: call_data("change_threshold", THRESHOLD_1)
     }, headers: auth, as: :json
     assert_response :success, @response.body
 
@@ -127,7 +131,7 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
     wallets = create_wallet
     post "/propose_multisig_tx", params: {
       wallet_id: wallets.first["id"], tx_type: "add_owner",
-      call_detail: { new_owner: CAROL, new_threshold: 2 }, evm_call_data: ADD_OWNER_DATA
+      call_detail: ADD_CAROL, evm_call_data: call_data("add_owner", ADD_CAROL)
     }, headers: auth, as: :json
     assert_response :bad_request
     assert_equal "group_required", body["code"]
@@ -137,7 +141,7 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
   test "group proposal creates one queued tx per chain sharing a group_id" do
     wallets = create_wallet
     post "/propose_multisig_tx_group", params: {
-      txs: wallets.map { |w| { wallet_id: w["id"], tx_type: "add_owner", call_detail: { new_owner: CAROL, new_threshold: 2 }, evm_call_data: ADD_OWNER_DATA } }
+      txs: wallets.map { |w| { wallet_id: w["id"], tx_type: "add_owner", call_detail: ADD_CAROL, evm_call_data: call_data("add_owner", ADD_CAROL) } }
     }, headers: auth, as: :json
     assert_response :success, @response.body
 
@@ -149,7 +153,7 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
 
     # 同一变更已在进行，不能再发一次
     post "/propose_multisig_tx_group", params: {
-      txs: wallets.map { |w| { wallet_id: w["id"], tx_type: "add_owner", call_detail: { new_owner: CAROL, new_threshold: 2 }, evm_call_data: ADD_OWNER_DATA } }
+      txs: wallets.map { |w| { wallet_id: w["id"], tx_type: "add_owner", call_detail: ADD_CAROL, evm_call_data: call_data("add_owner", ADD_CAROL) } }
     }, headers: auth, as: :json
     assert_response :bad_request
     assert_equal "change_already_pending", body["code"]
@@ -158,7 +162,7 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
   test "group proposal must cover every applicable chain" do
     wallets = create_wallet
     post "/propose_multisig_tx_group", params: {
-      txs: wallets.first(2).map { |w| { wallet_id: w["id"], tx_type: "change_threshold", call_detail: { new_threshold: 1 }, evm_call_data: CHANGE_THRESHOLD_DATA } }
+      txs: wallets.first(2).map { |w| { wallet_id: w["id"], tx_type: "change_threshold", call_detail: THRESHOLD_1, evm_call_data: call_data("change_threshold", THRESHOLD_1) } }
     }, headers: auth, as: :json
     assert_response :bad_request
     assert_equal "group_required", body["code"]
@@ -171,12 +175,12 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
     WalletOwner.create!(wallet_id: wallets.last["id"], owner_address: CAROL, position: 2)
 
     post "/propose_multisig_tx_group", params: {
-      txs: wallets.first(2).map { |w| { wallet_id: w["id"], tx_type: "add_owner", call_detail: { new_owner: CAROL, new_threshold: 2 }, evm_call_data: ADD_OWNER_DATA } }
+      txs: wallets.first(2).map { |w| { wallet_id: w["id"], tx_type: "add_owner", call_detail: ADD_CAROL, evm_call_data: call_data("add_owner", ADD_CAROL) } }
     }, headers: auth, as: :json
     assert_response :success, @response.body
 
     post "/propose_multisig_tx_group", params: {
-      txs: [ { wallet_id: wallets.last["id"], tx_type: "add_owner", call_detail: { new_owner: CAROL, new_threshold: 2 }, evm_call_data: ADD_OWNER_DATA } ]
+      txs: [ { wallet_id: wallets.last["id"], tx_type: "add_owner", call_detail: ADD_CAROL, evm_call_data: call_data("add_owner", ADD_CAROL) } ]
     }, headers: auth, as: :json
     assert_response :bad_request
   end
@@ -184,7 +188,7 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
   test "group rejects different changes per chain" do
     wallets = create_wallet
     post "/propose_multisig_tx_group", params: {
-      txs: wallets.each_with_index.map { |w, i| { wallet_id: w["id"], tx_type: "change_threshold", call_detail: { new_threshold: i.zero? ? 1 : 2 }, evm_call_data: CHANGE_THRESHOLD_DATA } }
+      txs: wallets.each_with_index.map { |w, i| { wallet_id: w["id"], tx_type: "change_threshold", call_detail: { new_threshold: i.zero? ? 1 : 2 }, evm_call_data: call_data("change_threshold", { new_threshold: i.zero? ? 1 : 2 }) } }
     }, headers: auth, as: :json
     assert_response :bad_request
   end
@@ -192,7 +196,7 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
   test "withdrawing one tx withdraws unsigned siblings in its group" do
     wallets = create_wallet
     post "/propose_multisig_tx_group", params: {
-      txs: wallets.map { |w| { wallet_id: w["id"], tx_type: "remove_owner", call_detail: { owner: BOB, new_threshold: 1 }, evm_call_data: REMOVE_OWNER_DATA } }
+      txs: wallets.map { |w| { wallet_id: w["id"], tx_type: "remove_owner", call_detail: REMOVE_BOB, evm_call_data: call_data("remove_owner", REMOVE_BOB) } }
     }, headers: auth, as: :json
     assert_response :success, @response.body
     txs = body["txs"]
@@ -217,12 +221,80 @@ class MultisigControllerTest < ActionDispatch::IntegrationTest
     assert_nil body["tx"]["group_id"]
     assert_equal 10, body["tx"]["chain_id"]
   end
+  def snapshot_for(to, value, data = "", nonce: "0", sender: SAFE, chain_id: 10)
+    { sender: sender, chainId: chain_id, nonce: nonce, callData: "0x" + MultisigIntent.encode_safe_call_data(to, value, data) }
+  end
+
+  test "first signer's snapshot must execute exactly the proposed transaction" do
+    wallets = create_wallet(chain_ids: [ 10 ])
+    post "/propose_multisig_tx", params: {
+      wallet_id: wallets.first["id"], tx_type: "transfer", call_detail: { to: CAROL, amount: "0.01" }, evm_call_data: "0x"
+    }, headers: auth, as: :json
+    tx_id = body["tx"]["id"]
+
+    # 展示「转 0.01 给 Carol」，快照却是「转 100 给 Bob」
+    [
+      snapshot_for(BOB, 100 * 10**18),
+      snapshot_for(CAROL, 10**16, sender: BOB),
+      snapshot_for(CAROL, 10**16, chain_id: 42161),
+      snapshot_for(CAROL, 10**16, nonce: "1")
+    ].each do |forged|
+      post "/submit_multisig_signature", params: {
+        multisig_tx_id: tx_id, signer_address: ALICE, signature: "0xsig", nonce: "0", user_op_snapshot: forged
+      }, headers: auth, as: :json
+      assert_response :bad_request
+      assert_equal "intent_mismatch", body["code"], forged.inspect
+    end
+    assert_equal "queued", MultisigTransaction.find(tx_id).status
+
+    post "/submit_multisig_signature", params: {
+      multisig_tx_id: tx_id, signer_address: ALICE, signature: "0xsig", nonce: "0", user_op_snapshot: snapshot_for(CAROL, 10**16)
+    }, headers: auth, as: :json
+    assert_response :success, @response.body
+    assert_equal "signing", body["tx"]["status"]
+  end
+
+  test "rejection snapshot must be an empty self-call at the target nonce" do
+    wallets = create_wallet(chain_ids: [ 10 ])
+    wallet = Wallet.find(wallets.first["id"])
+    target = MultisigTransaction.create!(
+      wallet: wallet, proposer: @alice, chain_id: 10, queue_position: 1, tx_type: "transfer", nonce: "3",
+      call_detail: { to: CAROL, amount: "0.01" }, evm_call_data: "0x", threshold_at_creation: 2,
+      status: "signing", expires_at: 5.days.from_now
+    )
+    MultisigSignature.create!(multisig_transaction_id: target.id, signer_address: ALICE, signature: "0xsig")
+
+    propose = ->(snapshot) {
+      post "/propose_multisig_tx", params: {
+        wallet_id: wallet.id, tx_type: "cancel", call_detail: { reason: "x" }, evm_call_data: "0x",
+        replaces_tx_id: target.id, user_op_snapshot: snapshot
+      }, headers: auth(@bob_token), as: :json
+    }
+
+    propose.call(snapshot_for(BOB, 100 * 10**18, nonce: "3"))
+    assert_response :bad_request
+    assert_equal "intent_mismatch", body["code"]
+
+    propose.call(snapshot_for(SAFE, 0, nonce: "3"))
+    assert_response :success, @response.body
+  end
+
+  test "proposal calldata must encode the displayed owner change" do
+    wallets = create_wallet(chain_ids: [ 10 ])
+    post "/propose_multisig_tx", params: {
+      wallet_id: wallets.first["id"], tx_type: "change_threshold",
+      call_detail: THRESHOLD_1, evm_call_data: call_data("change_threshold", { new_threshold: 2 })
+    }, headers: auth, as: :json
+    assert_response :bad_request
+    assert_equal "intent_mismatch", body["code"]
+  end
+
   test "the owner who locked a tx can release it immediately, others must wait" do
     wallets = create_wallet(chain_ids: [ 10 ])
     wallet = Wallet.find(wallets.first["id"])
     tx = MultisigTransaction.create!(
       wallet: wallet, proposer: @alice, chain_id: 10, queue_position: 1, tx_type: "change_threshold",
-      call_detail: { new_threshold: 1 }, evm_call_data: CHANGE_THRESHOLD_DATA, threshold_at_creation: 2,
+      call_detail: THRESHOLD_1, evm_call_data: call_data("change_threshold", THRESHOLD_1), threshold_at_creation: 2,
       status: "ready", expires_at: 5.days.from_now, updated_at: 1.hour.ago
     )
 
