@@ -1,12 +1,15 @@
 class HomeController < ApplicationController
+  PHONE_FORMAT = /\A\d{11}\z/ # 与前端 login.client.vue 一致，短信通道只发国内手机号
+
   def index
     render json: { message: "Hello, World!" }
   end
 
   def send_sms
-    code = rand(100_000..999_999)
-    phone = params[:phone]
-    VerificationToken.create(context: "phone-login", sent_to: phone, code: code, expires_at: Time.now + 15.minutes)
+    phone = params[:phone].to_s
+    raise AppError.new("Invalid phone", code: "invalid_phone") unless phone.match?(PHONE_FORMAT)
+
+    code = VerificationToken.issue!(context: "phone-login", sent_to: phone, ip: request.remote_ip)
     if ENV["SMS_ENABLED"] == "ENABLED"
       begin
         response = SendSms.send_sms_aliyun(phone, code)
@@ -19,43 +22,30 @@ class HomeController < ApplicationController
   end
 
   def send_email
-    code = rand(100_000..999_999)
-    email = params[:email]
-    VerificationToken.create(context: "email-login", sent_to: email, code: code, expires_at: Time.now + 60.minutes)
+    email = params[:email].to_s.strip
+    raise AppError.new("Invalid email", code: "invalid_email") unless email.match?(URI::MailTo::EMAIL_REGEXP)
 
-    mailer = SigninMailer.with(code: code, recipient: email).signin
-    mailer.deliver_now!
+    code = VerificationToken.issue!(context: "email-login", sent_to: email, ip: request.remote_ip)
+    SigninMailer.with(code: code, recipient: email).signin.deliver_now!
 
-    render json: { result: "ok", email: params[:email] }
+    render json: { result: "ok", email: email }
   end
 
   def signin
-    phone = params[:phone]
-    code = params[:code]
-    token = VerificationToken.find_by(context: "phone-login", sent_to: phone, code: code, used: false)
-
-    raise AppError.new("Invalid Phone Or Code") unless token
-    raise AppError.new("Code Expired") if DateTime.now > token.expires_at
-
-    token.update(used: true)
+    phone = params[:phone].to_s
+    VerificationToken.consume!(context: "phone-login", sent_to: phone, code: params[:code])
 
     user = User.find_or_create_by(phone: phone)
     user.update(phone_verified: true) if user.phone_verified == false
-    render json: { result: "ok", auth_token: user.gen_auth_token, phone: params[:phone], id: user.id, address_type: "phone" }
+    render json: { result: "ok", auth_token: user.gen_auth_token, phone: phone, id: user.id, address_type: "phone" }
   end
 
   def signin_with_email
-    email = params[:email]
-    code = params[:code]
-    token = VerificationToken.find_by(context: "email-login", sent_to: email, code: code, used: false)
-
-    raise AppError.new("Invalid Email Or Code") unless token
-    raise AppError.new("Code Expired") if DateTime.now > token.expires_at
-
-    token.update(used: true)
+    email = params[:email].to_s.strip
+    VerificationToken.consume!(context: "email-login", sent_to: email, code: params[:code])
 
     user = User.find_or_create_by(email: email)
-    render json: { result: "ok", auth_token: user.gen_auth_token, email: params[:email], id: user.id, address_type: "email" }
+    render json: { result: "ok", auth_token: user.gen_auth_token, email: email, id: user.id, address_type: "email" }
   end
 
   def set_handle

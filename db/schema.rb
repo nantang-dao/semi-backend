@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_10_01_000003) do
+ActiveRecord::Schema[8.0].define(version: 2026_10_01_000004) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -75,7 +75,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_10_01_000003) do
     t.index ["class_id", "chain_id"], name: "index_badges_on_class_id_and_chain_id"
     t.index ["instant_id"], name: "index_badges_on_instant_id", unique: true, where: "(instant_id IS NOT NULL)"
     t.index ["wallet_address_lower", "chain_id", "status"], name: "index_badges_on_wallet_address_lower_and_chain_id_and_status"
-    t.check_constraint "status::text = ANY (ARRAY['pending'::character varying, 'accepted'::character varying, 'rejected'::character varying]::text[])", name: "badges_status_check"
+    t.check_constraint "status::text = ANY (ARRAY['pending'::character varying::text, 'accepted'::character varying::text, 'rejected'::character varying::text])", name: "badges_status_check"
   end
 
   create_table "handle_aliases", force: :cascade do |t|
@@ -265,6 +265,10 @@ ActiveRecord::Schema[8.0].define(version: 2026_10_01_000003) do
     t.boolean "used", default: false, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.integer "attempts", default: 0, null: false
+    t.string "ip"
+    t.index ["context", "sent_to", "created_at"], name: "idx_on_context_sent_to_created_at_ce20ff48e9"
+    t.index ["ip", "created_at"], name: "index_verification_tokens_on_ip_and_created_at"
   end
 
   create_table "wallet_owners", id: :string, force: :cascade do |t|

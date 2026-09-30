@@ -8,20 +8,47 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "should send sms" do
-    # TODO: Set up ENV and stub RPCClient if needed
-    post send_sms_url, params: { phone: "1234567890" }
-    assert VerificationToken.find_by(context: "phone-login", sent_to: "1234567890")
+    post send_sms_url, params: { phone: "13800000000" }
     assert_equal({ "result" => "ok" }, JSON.parse(@response.body))
+    token = VerificationToken.find_by(context: "phone-login", sent_to: "13800000000")
+    assert_match(/\A\d{6}\z/, token.code)
+    assert_equal "127.0.0.1", token.ip
+  end
+
+  test "send sms rejects a malformed phone" do
+    post send_sms_url, params: { phone: "1234567890" }
+    assert_response :bad_request
+    assert_equal "invalid_phone", JSON.parse(@response.body)["code"]
+    assert_equal 0, VerificationToken.count
+  end
+
+  test "send sms is rate limited per phone" do
+    post send_sms_url, params: { phone: "13800000000" }
+    post send_sms_url, params: { phone: "13800000000" }
+    assert_response :bad_request
+    assert_equal "rate_limited", JSON.parse(@response.body)["code"]
+    assert_equal 1, VerificationToken.count
   end
 
   test "should signin with valid code" do
-    VerificationToken.create(context: "phone-login", sent_to: "1234567890", code: "12345", expires_at: Time.now + 15.minutes)
-    post signin_url, params: { phone: "1234567890", code: "12345" }
+    VerificationToken.create(context: "phone-login", sent_to: "13800000000", code: "123456", expires_at: Time.now + 15.minutes)
+    post signin_url, params: { phone: "13800000000", code: "123456" }
     assert_response :success
-    assert JSON.parse(@response.body).key?("auth_token")
-    assert JSON.parse(@response.body).key?("phone")
-    assert JSON.parse(@response.body).key?("id")
-    assert JSON.parse(@response.body).key?("address_type")
+    body = JSON.parse(@response.body)
+    user = User.find_by(phone: "13800000000")
+    assert_equal({ "result" => "ok", "auth_token" => body["auth_token"], "phone" => "13800000000", "id" => user.id, "address_type" => "phone" }, body)
+  end
+
+  test "signin locks the code after five wrong guesses" do
+    VerificationToken.create(context: "phone-login", sent_to: "13800000000", code: "123456", expires_at: Time.now + 15.minutes)
+    5.times do
+      post signin_url, params: { phone: "13800000000", code: "000000" }
+      assert_equal "invalid_code", JSON.parse(@response.body)["code"]
+    end
+    post signin_url, params: { phone: "13800000000", code: "123456" }
+    assert_response :bad_request
+    assert_equal "too_many_attempts", JSON.parse(@response.body)["code"]
+    assert_nil User.find_by(phone: "13800000000")
   end
 
   test "password signin is not routable" do
@@ -261,17 +288,21 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
   test "should signin with email" do
     post send_email_url, params: { email: "delivered@resend.dev" }
     assert_response :success
-    assert JSON.parse(@response.body).key?("result")
-    assert JSON.parse(@response.body).key?("email")
-    # p ActionMailer::Base.deliveries.last
-    # assert ActionMailer::Base.deliveries.last.to.include?("delivered@resend.dev")
-    # assert ActionMailer::Base.deliveries.last.subject == "Semi Sign-In"
+    assert_equal({ "result" => "ok", "email" => "delivered@resend.dev" }, JSON.parse(@response.body))
+    code = ActionMailer::Base.deliveries.last.body.encoded[/\d{6}/]
 
-    VerificationToken.create(context: "email-login", sent_to: "delivered@resend.dev", code: "12345", expires_at: Time.now + 15.minutes)
-    post signin_with_email_url, params: { email: "delivered@resend.dev", code: "12345" }
+    post signin_with_email_url, params: { email: "delivered@resend.dev", code: code }
     assert_response :success
-    assert JSON.parse(@response.body).key?("result")
-    assert JSON.parse(@response.body).key?("email")
+    assert_equal "delivered@resend.dev", JSON.parse(@response.body)["email"]
+
+    # 用过的码不能再用
+    post signin_with_email_url, params: { email: "delivered@resend.dev", code: code }
+    assert_equal "invalid_code", JSON.parse(@response.body)["code"]
+  end
+
+  test "send email rejects a malformed address" do
+    post send_email_url, params: { email: "not-an-email" }
+    assert_equal "invalid_email", JSON.parse(@response.body)["code"]
   end
 
   test "should add transaction with gas credits" do

@@ -4,6 +4,8 @@
 
 - 只有两种登录方式：手机短信验证码（`send_sms` → `signin`）和邮箱验证码（`send_email` → `signin_with_email`）。**没有密码登录**。
 - 验证码只经短信 / 邮件送达。`send_sms` 的响应固定是 `{ "result": "ok" }`，测试按整个响应断言，多出任何字段都会失败。
+- 验证码：6 位，`SecureRandom` 生成，15 分钟有效；同一目标（手机号 / 邮箱）任何时刻只有一个有效码，发新码即作废旧码；每个码最多试 5 次，第 5 次错后作废；核对与核销用带条件的 `update_all`，并发不能多试或复用。
+- 发送频率：同一目标 60 秒 1 次、每小时 5 次、每天 12 次；同一 IP 每小时 30 次；超限返回 `rate_limited`。`send_sms` 只接受 11 位手机号（`invalid_phone`）。规则在 `VerificationToken.issue!` / `consume!`。
 - 验证码不进日志：`send_sms` 不记录验证码，`filter_parameter_logging` 过滤 `code` 参数（`/signin` 的请求参数）。
 - 登录成功签发 `AuthToken`（一年有效），客户端以 `Authorization: Bearer <token>` 调用。
 - 支付码（keystore 口令）只在前端用，不以任何形式发给后端。
@@ -42,6 +44,14 @@
 - 应用仍由开发者自行上线，而且**新应用默认就是 `active`**：之前默认 `draft`，开发者不知道要手动上线。攻击面在于回调协议，不在于谁能上线。
 - 生产核查：现有 16 个应用的回调地址都符合新规则。其中 `CCTI` 用的是公网 IP 上的 `http://`，为兼容保留了 `http`；授权码经 PKCE 保护，截获授权码也换不到 token。
 
+### 2026-10：验证码可在线爆破、短信可被刷
+
+- 问题：每调一次 `send_sms` / `send_email` 就多一个同时有效的码（邮箱码 60 分钟），旧码不作废；`signin` 直接 `find_by(code:)`，猜错没有代价；发送不限频率，也不校验手机号；验证码用 `rand` 生成。对目标邮箱连发几十次再爆破，几分钟就能登进别人的账户；短信可以被刷费。
+- 修复（2026-10-01）：见「当前规则」里的验证码和发送频率两条。`verification_tokens` 新增 `attempts`、`ip` 两列和两个索引（`20261001000004`，只加列，滚动部署安全）。错误码 `invalid_phone` / `invalid_email` / `rate_limited` / `invalid_code` / `code_expired` / `too_many_attempts`，前端 `semi_api.ts` 的 `ApiError` 映射成中文；登录页遇到 `rate_limited` 仍进输码页（之前的码可能还有效）。
+- 限额按生产数据定（2026-10-01 只读查询）：全站最忙的一小时发了 21 个码（11 个目标），所以每 IP 每小时 30 次，给活动现场共用 Wi-Fi 留余量；单个目标一天最多发过 11 次，所以每天上限 12。这样一个目标每天最多被猜 60 次，持续一个月约 0.2% 的机会猜中。
+- IP 取 `request.remote_ip`：api.semi.im 直接解析到 homepod，前面没有 CDN，Traefik 写入 `X-Forwarded-For`，Rails 信任内网代理；生产日志里记录的是真实的客户端公网 IP（2026-10-01 核对）。以后前面加 CDN，要配置 `trusted_proxies`，否则所有人共用 CDN 的 IP 额度。
+- 顺带发现：3 个账户的手机号是 13 位（2025-05/06 注册，疑似测试号），现在的登录页本来就只收 11 位，改动前后都登不上；另有几条 `?redirect=oauth` 拼进手机号的旧发送记录，是早期前端 bug。
+
 ### 2026-10：签名私钥与 Safe 地址可随意自报
 
 - 问题：`set_encrypted_keys` / `set_evm_chain_address` 原样保存前端报上来的 `evm_chain_active_key` 和 `evm_chain_address`，不要求证明持有私钥，也没有唯一约束。交易记录按地址匹配，多签按 `evm_chain_active_key` 识别 owner，所以把别人的地址报成自己的，就能读别人的交易记录、在多签里冒充成员。
@@ -65,4 +75,4 @@
 
 ## 未修的问题
 
-审计发现、还没修的认证相关问题（验证码限流、地址自报、令牌明文、6 位支付码等）统一记在 `security-audit-2026-10.md`，修了再挪到上面的变更记录。
+审计发现、还没修的认证相关问题（令牌明文、6 位支付码等）统一记在 `security-audit-2026-10.md`，修了再挪到上面的变更记录。
