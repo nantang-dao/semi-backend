@@ -1,0 +1,47 @@
+config/initializers/filter_parameter_logging.rb
+  s_21c523732de41d::t_e76c287b9ea97e 7
+docs/keystore.md
+  s_21c523732de41d::t_4a146a053fe42b 2,4,7-8,10-11,13-17,19-22,24-30,32,34,36-38,46,48,50-59,61-65,80-82,86,88,95,97,104,112-113,115-116,119-123,125-129,132-135,137-143,145,147
+  s_21c523732de41d::t_52b1076aa991a9 1,3,5-6,9,12,18,23,31,33,35,39-45,47,49,60,66-79,83-85,87,89-94,96,98-103,105-109,111,114,117-118,130-131,136,144,146,148-151
+  s_21c523732de41d::t_f6548ef705170a 110,124
+db/migrate/20261002000001_add_keystore_v2_to_users.rb
+  s_21c523732de41d::t_e76c287b9ea97e 1-11
+test/services/keystore_vault_test.rb
+  s_21c523732de41d::t_51502994437055 1-60,83
+  s_21c523732de41d::t_602e5ee92e032c 61-82
+app/controllers/home_controller.rb
+  s_21c523732de41d::t_9eb89b20cea82f 158,160-163,197,202,207-265,275-284,298-303
+app/services/keystore_vault.rb
+  s_21c523732de41d::t_b15a71d94aa381 1-114,116-118,120,123,126,131-132,135-194
+  s_21c523732de41d::t_e20228a493e60f 115,119,121-122,124-125,127-130,133-134
+config/routes.rb
+  s_21c523732de41d::t_9eb89b20cea82f 24-26
+test/controllers/home_controller_test.rb
+  s_21c523732de41d::t_51502994437055 219-302
+CLAUDE.md
+  s_21c523732de41d::t_31fde59f17d92b 45
+config/initializers/keystore_vault.rb
+  s_21c523732de41d::t_7750f904b0b33f 1-5
+db/schema.rb
+  s_21c523732de41d::t_f71a2d0aeca20b 13,254-258
+docs/security-audit-2026-10.md
+  s_21c523732de41d::t_0c0dbbeda5daad 43
+ginger.yml
+  s_21c523732de41d::t_5cf72f0e14df92 53-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "287e0e5658f2ab426fb37ec9c28791dfd47b4a41",
+  "prompts": {},
+  "sessions": {
+    "s_21c523732de41d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7cce0af7-aa66-434c-92bc-b50481bff78b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
