@@ -50,5 +50,7 @@ secrets:
     - ALCHEMY_API_KEY
     - SOLA_AUTH_TOKEN
     - BADGE_SERVICE_TOKEN
+    # keystore v2 的服务端密钥（docs/keystore.md）。丢了所有 v2 用户都解不开 keystore，务必另行备份
+    - KEYSTORE_SERVER_SECRET
 
 retain_containers: 3
