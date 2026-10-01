@@ -1,6 +1,6 @@
 # Keystore 与 key_share
 
-状态：2026-10-01 实现（backend、app 见各自提交），**尚未部署**。对应 `security-audit-2026-10.md` 的「6 位支付码撑不住 keystore」，也是外部报告第 3 条。背景分析见工作区根目录的 `passcode-and-keystore.md`（2026-08-31）。
+状态：2026-10-01 实现并部署（backend `287e0e5`、`a0fd13c`，app `f39c2b3`、`3b2045d`）。对应 `security-audit-2026-10.md` 的「6 位支付码撑不住 keystore」，也是外部报告第 3 条。背景分析见工作区根目录的 `passcode-and-keystore.md`（2026-08-31）。
 
 代码：后端 `app/services/keystore_vault.rb`、`home_controller.rb`（`get_keystore` / `unlock_keystore` / `update_keystore` / `set_encrypted_keys`）；前端 `semi-core/src/keys/keystore.ts`（v2 加解密）、`utils/keystore_session.ts`（解锁、缓存、v1 升级，页面都只调它的 `unlockPrivateKey`）、`utils/keystore_message.ts`（升级签名的消息）。
 
@@ -108,6 +108,26 @@ keystore  = AES-256-GCM(aes_key, iv, 助记词或私钥)
 2. 先部署后端（migration 只加列，旧前端照常工作：v1 照旧从 `get_me` 取）。
 3. 再部署前端。之后用户第一次输支付码时自动升级。
 4. 部署时已打开的旧页面：用的是打开时从 `get_me` 拿到的 v1 keystore，私钥没变，照常能签名；只有之后重新拉取 `get_me`（而这个用户已在新页面里升级成 v2），旧页面才拿不到 keystore 而报错，刷新即可。
+
+### 上线前验证（2026-10-01）
+
+用真实的 `utils/keystore_session.ts` + `utils/semi_api.ts` + semi-core，对本地 Rails 跑了端到端测试（临时测试，未提交）。用户通过部署前旧前端的 `set_encrypted_keys` v1 写法创建，存储形态与生产一致（jsonb 字符串）。全部通过：
+
+- 旧页面从 `get_me` 拿到 v1、本地能解；v1 输错照旧报错、不升级。
+- 助记词用户输对：私钥不变、升级成 v2，解出来仍是原助记词；`get_me` 不再返回 keystore。导入裸私钥的用户升级后仍是同一私钥串。
+- 缓存期间签名不联网；本地连错 3 次后回到服务端并计数（剩余 49 次）；刷新或退出后走服务端，输对计数清零。
+- 升级前旧页面手里的 v1 副本升级后仍能解出同一私钥。
+- 升级失败（手机时间快 1 小时）：这次签名照常、仍是 v1，本次会话不重试，刷新后升级成功。
+- keystore 私钥与绑定的不一致：照常解、不升级。
+- 新绑定（paymentcode 页的写法）直接是 v2。
+- 第 50 次输错锁定，锁定期间正确支付码也被拒。
+
+另外：migration 本地 `db:migrate:redo` 通过；生产部署前在 `20261001000005`、无新列、317 行。
+
+### 上线记录
+
+- 2026-10-01 部署前 `pg_dump` 全库备份（只读），存在 `~/backups/semi/`（不进仓库）。备份里的 v1 keystore 仍只受支付码保护，**备份要按私钥同级对待**。
+- `KEYSTORE_SERVER_SECRET` 2026-10-01 生成，只在 `.env.production` 和生产容器环境里；**需另存到密码管理器**，并且不要和数据库备份放在一起（放在一起等于 v2 白做）。
 
 ## 防护范围
 

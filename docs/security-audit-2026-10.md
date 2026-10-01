@@ -40,7 +40,7 @@
 
 ### 严重
 
-- **6 位支付码撑不住 keystore**（代理报告，`semi-core/src/keys/keystore.ts`）。PBKDF2-SHA256 10 万次，10⁶ 种组合，数据库或备份泄露后单个用户约 10 秒可穷举。salt 和 IV 存在服务器上是正常的，问题在口令熵。修法：引入服务器没有的熵（WebAuthn PRF / 设备密钥），或强制高熵口令 + Argon2id；至少不能只靠 6 位数字。2026-10-01 已实现 keystore v2（`key_share` + 服务端限次解锁），**未部署**，见 `keystore.md`。服务器整体被攻破的情况 v2 也防不住，那部分仍未修。
+- **6 位支付码撑不住 keystore**（代理报告，`semi-core/src/keys/keystore.ts`）。PBKDF2-SHA256 10 万次，10⁶ 种组合，数据库或备份泄露后单个用户约 10 秒可穷举。salt 和 IV 存在服务器上是正常的，问题在口令熵。修法：引入服务器没有的熵（WebAuthn PRF / 设备密钥），或强制高熵口令 + Argon2id；至少不能只靠 6 位数字。2026-10-01 已实现并部署 keystore v2（`key_share` + 服务端限次解锁），见 `keystore.md`。服务器整体被攻破的情况 v2 也防不住，那部分仍未修。
 
 ### 高
 
