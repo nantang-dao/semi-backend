@@ -25,12 +25,14 @@ class KeystoreVaultTest < ActiveSupport::TestCase
     assert_equal 0, @user.reload.keystore_failed_attempts
   end
 
-  test "wrong verifiers are counted and lock the keystore at 10, even for the right one" do
-    9.times do |i|
+  test "wrong verifiers are counted and lock the keystore at the limit, even for the right one" do
+    limit = KeystoreVault::MAX_FAILED_ATTEMPTS
+    assert_equal 50, limit
+    (limit - 1).times do |i|
       err = assert_raises(KeystoreVault::BadPasscode) { KeystoreVault.unlock!(@user, "00" * 32) }
-      assert_equal 9 - i, err.attempts_left
+      assert_equal limit - 1 - i, err.attempts_left
     end
-    assert_equal 9, @user.reload.keystore_failed_attempts
+    assert_equal limit - 1, @user.reload.keystore_failed_attempts
     assert_raises(KeystoreVault::Locked) { KeystoreVault.unlock!(@user, "00" * 32) }
     assert_raises(KeystoreVault::Locked) { KeystoreVault.unlock!(@user, VERIFIER) }
 

@@ -265,7 +265,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
 
     post unlock_keystore_url, params: { verifier: "00" * 32 }, headers: auth
     body = JSON.parse(@response.body)
-    assert_equal [ "bad_passcode", 9 ], [ body["code"], body["attempts_left"] ]
+    assert_equal [ "bad_passcode", KeystoreVault::MAX_FAILED_ATTEMPTS - 1 ], [ body["code"], body["attempts_left"] ]
     post unlock_keystore_url, params: { verifier: "ab" * 32 }, headers: auth
     assert_response :success
     assert_equal [ V2_KEYSTORE, "cd" * 32 ], JSON.parse(@response.body).values_at("encrypted_keys", "key_share")

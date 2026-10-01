@@ -32,9 +32,10 @@ module KeystoreVault
     end
   end
 
-  # 连续错 10 次锁 24 小时（期满自动解锁、重新计数）：一天最多猜 10 次，一年约 0.4% 猜中 6 位数字。
+  # 连续错 50 次锁 24 小时（期满自动解锁、重新计数）：一天最多猜 50 次，一年约 1.8% 猜中 6 位数字。
+  # 2026-10-01 从 10 次放宽到 50 次，给记不清支付码的用户留余地。
   # 锁定期间正确的支付码也不放行，否则锁定挡不住攻击者。
-  MAX_FAILED_ATTEMPTS = 10
+  MAX_FAILED_ATTEMPTS = 50
   LOCK_DURATION = 24.hours
   # update_keystore 的签名有效期。issued_at 还必须晚于上一次更新，旧签名不能重放回旧 keystore。
   UPDATE_WINDOW = 10.minutes
@@ -111,7 +112,7 @@ module KeystoreVault
 
   # ---- 解锁 ----
 
-  # 返回 key_share（hex）。错了计数，满 10 次锁定；行锁防止并发请求绕过计数。
+  # 返回 key_share（hex）。错了计数，满 MAX_FAILED_ATTEMPTS 次锁定；行锁防止并发请求绕过计数。
   # 异常要在事务提交之后再抛：在 with_lock 里抛会回滚，失败计数就白记了。
   def unlock!(user, verifier)
     raise Invalid, "verifier must be 32 bytes of hex" unless verifier.to_s.match?(HEX32)
