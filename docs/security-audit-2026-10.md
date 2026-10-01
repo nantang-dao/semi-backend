@@ -2,6 +2,8 @@
 
 2026-10-01 对 semi-app 和 semi-backend 做的只读安全审计（Claude 在审计会话中，四个方向并行：后端认证授权、后端 OAuth 与多签、前端 Nitro 服务端、前端密钥处理）。这份文档是**跟踪清单**：修了一项就改它的状态、写上 commit，细节放进对应的设计文档（`auth.md`、`multisig.md`）。
 
+2026-09-30 收到一份外部报告（`semi-security-report-1.md`，在工作区根目录、不在仓库里；bigsong，只读源码 + 合成数据演示）：其中第 1、2、4–9 条与本清单的已修复项重合；第 3 条即下面的「6 位支付码」，报告实测单核约 1 小时平均破解一个 keystore；第 10 条见「低」。
+
 标记说明：**已核实** 表示对照代码亲自确认过；**代理报告** 表示审计代理报告、尚未逐条复核，修之前先确认。行号是审计当时的，可能已经漂移。
 
 ## 已修复
@@ -25,12 +27,14 @@
 | 中 | 交易记录可伪造（冒充发送方、写进别人的收款记录）、`gas_used` 可为负 | backend `aa8fa31`，app `f9f8709` | `records.md` |
 | 中 | 任何用户都能往全局代币列表加币（假 USDC） | backend `53408c8` | `records.md` |
 | 中 | 多签：抢注别人的 Safe 地址；成员 `user_id` 和显示名可伪造 | backend `e9f6796`、`d1c1af6`，app `be25ffa` | `multisig.md` |
+| 中 | `.env.build` 曾提交进公开仓库（semi-app `af3bc40` 加入、`25d2f36` 删除，在 `pay`、`safe` 分支上），含 `VITE_SOLA_AUTH_TOKEN`（无过期、已不再使用，决定不轮换）和 `VITE_INFURA_API_KEY` | 2026-10-01 强推改写两个分支（`25d2f36` → `0ee5628`），分支、tag、PR ref 均不再包含 `af3bc40`。GitHub 仍可能按 SHA 返回旧提交，彻底清除要联系 GitHub 支持；**Infura key 仍建议轮换** | — |
 
-以上均已核实，生产数据做过只读核查（见各设计文档）。截至 2026-10-01 **尚未部署**。部署前：`auth.md` 里唯一索引的查重 SQL；要启用管理员功能，在 `.env.production` 配 `ADMIN_USER_IDS` 并加进 `ginger.yml` 的 `secrets.inject`。
+以上均已核实，生产数据做过只读核查（见各设计文档）。2026-10-01 部署上线（backend `a21d00f`，app `e523155`）：部署前跑过 `auth.md` 的查重 SQL（无重复），5 个 migration 均已执行。要启用管理员功能，在 `.env.production` 配 `ADMIN_USER_IDS` 并加进 `ginger.yml` 的 `secrets.inject`（目前未配，没有管理员）。
 
 ## 决定不修
 
 - **多签快照的 gas / paymaster 字段不核对**（2026-10-01 决定）。自付 gas 的链上，第一个签名人理论上可以抬高 `maxFeePerGas` 再自己打包，从 Safe 多收手续费。理由见 `multisig.md`。
+- **`lookup_multisig_tx_memos` 不限归属**（2026-10-01 确认是预期行为）：按 tx_hash 返回任意多签交易和交易记录的备注，不检查调用者是否为成员。
 
 ## 未修
 
@@ -45,11 +49,9 @@
 
 ### 中
 
-- **`lookup_multisig_tx_memos` 不限归属**（代理报告）：按 tx_hash 返回任意多签交易的备注。同一审计项里的 `get_user` 等已修（见上）。
 - **登录 token 不是 HttpOnly**（其余部分已修，见上）：前端 JS 要读 `semi_auth_token` 拼 `Authorization` 头，改成 HttpOnly 需要后端下发 cookie 并做 CSRF 防护，2026-10-01 决定另行立项。强制 CSP（目前 Report-Only）也在这里跟进：看 semi-app 日志里的 `[csp-report]` 再收紧。
 - **令牌明文存库**（代理报告）：`AuthToken`、OAuth 访问令牌 / 刷新令牌 / 授权码都是明文；OAuth 访问令牌有效期 10 年。修法：只存 SHA-256；访问令牌约 1 小时。
 - **OAuth `profile` scope 同时返回手机号和邮箱**（代理报告）。修法：拆出 `phone`、`email` scope。
-- **`.env.build` 曾提交进公开仓库**（已核实）：semi-app `af3bc40` 加入、`25d2f36` 删除，在公开仓库 `nantang-dao/semi-app` 的 `pay`、`safe` 分支上。含 `VITE_SOLA_AUTH_TOKEN`（Sola / Hasura 的 `user` 角色 JWT，无过期时间；已不再使用，2026-10-01 决定只删历史、不轮换）和 `VITE_INFURA_API_KEY`（建议轮换）。改写这两个分支、只动这 2 个提交的方案已在本地验证，待强推。强推后 GitHub 仍可能按 SHA 缓存旧提交，彻底清除要联系 GitHub 支持。
 
 ### 低
 
@@ -64,6 +66,8 @@
 - InstantDB 权限只给 `profiles` 写了规则（代码已不再使用 InstantDB）。
 - `server/api/actions.get.ts` 是不鉴权的 Safe API 代理，参数未编码。
 - OAuth 同意页不展示回调域名，应用名可仿冒「Semi 官方」。
+- 公开仓库的文档里有生产钱包地址前缀（如 `multisig.md` 的 `0x7ea2…`）和用户 TSID，附带事故复盘（外部报告第 10 条）。地址只有前 4 位，风险低，可改成泛称。
+- 是否有人在修复前利用过回显验证码登录尚未排除：库里区分不出来、也不记 IP（见 `auth.md` 生产核查），需要只读查服务器上的旧 Rails 日志（重点 `get_encrypted_keys`）。
 - permissionless 在 app 里是 `^0.4.0`，semi-core 固定 `0.4.0`；升级必须跑 fork 测试，建议 app 也固定。
 
 ## 检查过、没发现问题
