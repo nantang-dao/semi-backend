@@ -1,0 +1,16 @@
+app/controllers/oauth_controller.rb
+  h_b053bf74bef223 93-95,97-98,101-104
+test/controllers/oauth_controller_test.rb
+  h_b053bf74bef223 48-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3c0d65291da9476d02cdd84e4c5270b997a40579",
+  "prompts": {},
+  "humans": {
+    "h_b053bf74bef223": {
+      "author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
