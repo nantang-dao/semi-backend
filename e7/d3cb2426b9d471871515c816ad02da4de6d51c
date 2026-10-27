@@ -1,0 +1,25 @@
+app/controllers/multisig_controller.rb
+  s_21c523732de41d::t_d5289a210af5ab 4-9
+  s_21c523732de41d::t_a5a481303e2e81 237
+  s_21c523732de41d::t_5bcb2034c7525a 1016
+docs/multisig.md
+  s_21c523732de41d::t_28b2ceb552dbd3 31-32
+  s_21c523732de41d::t_11ef61ecb1599a 206-224
+  s_21c523732de41d::t_eef44e7a0e9d55 86-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e7d3cb2426b9d471871515c816ad02da4de6d51c",
+  "prompts": {},
+  "sessions": {
+    "s_21c523732de41d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7cce0af7-aa66-434c-92bc-b50481bff78b",
+        "model": "deepseek/deepseek-v4.1-flash"
+      },
+      "human_author": "jiangplus <jiang.plus.times@gmail.com>"
+    }
+  }
+}
