@@ -90,13 +90,18 @@ class OauthController < ApplicationController
     scopes = at.scopes
 
     claims = { sub: user.id }
+    # 手机号、邮箱只能通过验证码登录写进来，所以库里有值就是已验证。
+    # phone_verified 列对 2025-05 之前的账号默认是 false，登录回调仍要给出号码，
+    # 否则依赖这个接口认领已有账号的应用（rice）会把同号用户拆成两个。
     if scopes.include?("profile")
+      email = user.email.to_s.strip.presence
+      phone = user.phone.to_s.strip.presence
       claims.merge!(
         handle: user.handle,
-        email: user.email,
-        phone: user.phone,
-        phone_verified: user.phone_verified,
-        email_verified: user.email.present?
+        email: email,
+        phone: phone,
+        email_verified: email.present?,
+        phone_verified: phone.present?
       )
     end
     claims[:wallet_address] = user.evm_chain_address if scopes.include?("wallet")

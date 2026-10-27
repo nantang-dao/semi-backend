@@ -45,6 +45,51 @@ class OauthControllerTest < ActionDispatch::IntegrationTest
     assert_response :bad_request
   end
 
+  test "profile userinfo 返回已验证的邮箱和手机号" do
+    user = User.create!(
+      handle: "alice-link",
+      email: "Alice@Example.com",
+      phone: "13800000021",
+      phone_verified: false
+    )
+    app, = OauthApplication.create_with_secret(
+      name: "xjdao", owner: @dev,
+      redirect_uris: [ "https://xjdao.xyz/callback" ],
+      allowed_scopes: %w[openid profile wallet]
+    )
+    token = OauthAccessToken.issue(user: user, application: app, scopes: %w[openid profile wallet])
+
+    get "/oauth/userinfo", headers: { "Authorization" => "Bearer #{token.token}" }
+
+    assert_response :success
+    assert_equal user.id, body["sub"]
+    assert_equal "alice-link", body["handle"]
+    assert_equal "Alice@Example.com", body["email"]
+    assert_equal true, body["email_verified"]
+    assert_equal "13800000021", body["phone"]
+    assert_equal true, body["phone_verified"]
+    assert_nil body["wallet_address"]
+  end
+
+  test "没有 profile scope 时不返回邮箱和手机号" do
+    user = User.create!(email: "hidden@example.com", phone: "13800000022", phone_verified: true)
+    app, = OauthApplication.create_with_secret(
+      name: "bare", owner: @dev,
+      redirect_uris: [ "https://a.example/cb" ],
+      allowed_scopes: [ "openid" ]
+    )
+    token = OauthAccessToken.issue(user: user, application: app, scopes: [ "openid" ])
+
+    get "/oauth/userinfo", headers: { "Authorization" => "Bearer #{token.token}" }
+
+    assert_response :success
+    assert_equal user.id, body["sub"]
+    assert_nil body["email"]
+    assert_nil body["phone"]
+    assert_nil body["email_verified"]
+    assert_nil body["phone_verified"]
+  end
+
   test "admin application list requires an admin" do
     get "/oauth/admin/applications"
     assert_response :unauthorized
