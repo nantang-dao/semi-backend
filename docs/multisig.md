@@ -28,6 +28,8 @@
 
 - 交互：前端保持**全局切换网络**，所有页面只展示当前链。
 - Gas：OP、Arbitrum 由 ZeroDev self-funded paymaster 代付；主网不代付，Safe 自付（执行前检查余额）。
+  - 代付要 paymaster 在 EntryPoint 里有存款（`0xCc6841da…3c7c`，`depositTo` 充值）。存款不足或为 0 时**代付是不可能的**：`paymasterAndData` 已进快照哈希，去掉它等于让所有签名作废，没有「改成自付重发」这条路。
+  - 所以前端在建快照前先探活（`semi-app/utils/gas_sponsorship.ts` 的 `shouldSponsorMultisigFee`），确认付不了（存款低于底线 / 这条链没配 paymaster）就直接建自付快照，让这笔至少还能靠 Safe 的 ETH 发出去。探活返回 `null`（问不出来）时仍按代付建 —— 零存款探活给的是确定的 `false`，且一次 RPC 抖动就改自付会让不持有 ETH 的钱包卡死。
 - Gas 额度：`remaining_gas_credits` 全局一个数，三条链都以 ETH 计价。
 
 ### 数据模型：一链一行
@@ -81,7 +83,8 @@ gas / paymaster 字段不在核对范围内。ERC20 的 `symbol` 是提案人填
 - bundler 当场拒收、交易没上链，并且换个时机可能成功（出价低于 bundler 最低价、AA21 预付不足）：锁定者调用 `reset_executing_multisig_tx` 立即退回 `ready`（其他人仍需等 5 分钟），提示原因。
 - 同一份快照永远不可能成功（AA24 签名、AA25 nonce、快照过期、上链后调用回滚）：`fail_multisig_tx`，需要重新发起。
 - 已提交但等回执超时：保持 `executing`，不能当失败（可能仍会上链，当失败会诱导重复发起）。
-- gas 价格在第一个签名者建快照时冻结（进 SafeOp 哈希），所以快照里的 `maxFeePerGas` 在 bundler 报价上留了余量（L1 1.5 倍、L2 3 倍）；详情页显示的是「最高手续费」，实际按链上价格扣。
+- gas 价格在第一个签名者建快照时冻结（进 SafeOp 哈希），所以快照里的 `maxFeePerGas` 在 bundler 报价上留了余量（三条链统一 3 倍，2026-10-27 起；主网原来是 1.5 倍）；详情页显示的是「最高手续费」，实际按链上价格扣，多出的不花。冻结的是**出价上限**，出价低于 bundler 当前最低价时它当场拒收（`UserOpRejectedError`，带它要求的最低价），交易没上链、退回 `ready`，等价格回落后可以直接重试 —— 签名仍然有效。
+- 收签窗口 14 天：后端提案时写 `expires_at`（`MULTISIG_TX_TTL`），快照自己带同样的 14 天（semi-core `SNAPSHOT_VALIDITY_SECONDS`），`execute_multisig_tx` 按前者拦。**两边必须一致**，短的那个会以「已过期」把长的悄悄作废 —— 2026-10-27 之前这里是 5 天，而快照是 14 天，实际窗口只有 5 天。生产实测：已执行的多签从发起到执行平均 7~12 小时，最长 4.85 天。
 
 2026-09-24 的事故：`0xab7b…` 的「门槛 2→3」分组提案，Arbitrum 那笔在提案 15 小时后执行，bundler 最低价比冻结的出价高 0.5% 被拒；主网那笔从队列页执行，余额 0.0001 ETH 不够预付约 0.000265 ETH，但队列页没做余额检查。两笔都被标成了 failed。以上规则就是为此修的。
 
@@ -200,3 +203,22 @@ gas / paymaster 字段不在核对范围内。ERC20 的 `symbol` 是提案人填
 - 成员 `user_id` 一律按地址查找，客户端传的忽略。
 - 名字不入库：提案时丢掉 `*_name` 字段，读取时（`serialize_tx`）按地址现查用户名；`owner_snapshot` 里存过的名字读取时也重算。没有用户名就不给名字，前端显示地址。不用手机号兜底。库里的旧数据不用迁移。
 
+### 2026-10-27：收签窗口 5 天 → 14 天；代付前先探活；主网 gas 余量 1.5 → 3 倍
+
+**问题**（核查「多签等签名期间 gas 会不会不够」时发现）：
+
+1. 后端提案时写 `expires_at = 5.days`，而快照自带 14 天。两个窗口以短的为准，所以实际的收签窗口一直只有 5 天，14 天那道检查永远轮不到。生产实测已执行的多签从发起到执行平均 7~12 小时，最长 4.85 天 —— 5 天没有余量。
+2. 主网冻结 gas 价只留 1.5 倍。主网 base fee 几小时内涨一倍很常见，撑不住一次普通波动；被拒的代价是全部签名作废、重新发起。
+3. 多签建快照不探活 paymaster：只要 ZeroDev 返回了 `paymasterData` 就记 `sponsored: true`，**而存款为 0 时它照样签名返回**，于是建出一份注定发不出去的快照。`MultisigChainStatus` 更是只看静态配置，会在代付不可用时告诉用户「gas 代付」。
+
+**当时的线上状态**：Arbitrum 的 paymaster 存款在 2026-10-19 22:16 UTC 被 owner（`0xecbc06bd…`）用 `withdrawTo` 全额提出（0.003 ETH，块 516413717），之后一直是 0。Arbitrum 上 6 笔多签一笔都没执行成功过，其中 2 笔 `ready` 已过 5 天窗口。OP 的存款 0.004993 ETH，一切正常；主网没有 paymaster 合约，本来就自付。
+
+**修正**：
+
+- `MULTISIG_TX_TTL = 14.days`（`multisig_controller.rb`），两处提案路径统一用它，不再各写各的。
+- `bufferedMaxFeePerGas` 三条链统一 3 倍，去掉 L1/L2 的分支（它只是出价上限，多冻的部分执行后退回）。
+- `shouldSponsorMultisigFee`：建快照前 `probePaymasterAvailable`，确认付不了才建自付快照；`null` 仍按代付（见「约定」）。
+- `MultisigChainStatus` 改为探活结果优先，只有确认付不了才显示「不代付」。
+- 已存在的提案不会回溯改 `expires_at`（快照承诺的是写入时那份），过期的只能作废重发。
+
+**残留**：Arbitrum 的 paymaster 存款要人工充值才能恢复代付；充之前建出来的快照都是自付的（要求 Safe 在 Arbitrum 上有 ETH）。

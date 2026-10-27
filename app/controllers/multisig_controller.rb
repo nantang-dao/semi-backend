@@ -1,6 +1,12 @@
 class MultisigController < ApplicationController
   before_action :authenticate_user
 
+  # 收签窗口。快照本身也带一个 14 天的有效期（semi-core 的 SNAPSHOT_VALIDITY_SECONDS），
+  # 两边必须一致：短的那一个会以「已过期」把另一个悄悄作废。2026-10-27 之前这里是 5 天，
+  # 而快照是 14 天，实际窗口只有 5 天 —— 多签收签平均要 7~12 小时、最长近 5 天，5 天太紧。
+  # 改这个值只影响此后新建的提案：已存在的那笔按写入时的 expires_at 判定。
+  MULTISIG_TX_TTL = 14.days
+
   # POST /create_multisig_wallet
   # params: name, chain_id, chain_ids?, owners (array of {address, user_id?}), threshold, safe_address
   #
@@ -228,7 +234,7 @@ class MultisigController < ApplicationController
     replaces_tx_id = params[:replaces_tx_id].to_s.presence
     memo = params[:memo].to_s.strip.presence
     sender_note = params[:sender_note].to_s.strip.presence
-    expires_at = 5.days.from_now
+    expires_at = MULTISIG_TX_TTL.from_now
 
     # evm_call_data 必须就是 call_detail（页面展示给签名人的内容）编码出来的调用
     MultisigIntent.validate_proposal!(tx_type, call_detail, evm_call_data)
@@ -1007,7 +1013,7 @@ class MultisigController < ApplicationController
       threshold_at_creation: wallet.threshold,
       replaces_tx_id: nil,
       status: "queued",
-      expires_at: 5.days.from_now,
+      expires_at: MULTISIG_TX_TTL.from_now,
       memo: memo,
       sender_note: sender_note,
       group_id: group_id
