@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_10_01_000005) do
+ActiveRecord::Schema[8.0].define(version: 2026_10_02_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -251,6 +251,11 @@ ActiveRecord::Schema[8.0].define(version: 2026_10_01_000005) do
     t.boolean "can_send_badge", default: false
     t.jsonb "contact_list"
     t.datetime "handle_changed_at"
+    t.string "keystore_verifier_mac"
+    t.string "key_share_ciphertext"
+    t.integer "keystore_failed_attempts", default: 0, null: false
+    t.datetime "keystore_locked_until"
+    t.datetime "keystore_updated_at"
     t.index "lower((evm_chain_active_key)::text)", name: "index_users_on_lower_evm_chain_active_key", unique: true, where: "(evm_chain_active_key IS NOT NULL)"
     t.index "lower((evm_chain_address)::text)", name: "index_users_on_lower_evm_chain_address", unique: true, where: "(evm_chain_address IS NOT NULL)"
     t.index ["email"], name: "index_users_on_email", unique: true

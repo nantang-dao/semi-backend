@@ -42,6 +42,7 @@ bin/brakeman
 - Users authenticate via phone SMS code or email code — there is no password login (removed 2026-10, see `docs/auth.md`)
 - Open findings from the 2026-10 security audit are tracked in `docs/security-audit-2026-10.md`; mark them fixed there when you fix one
 - Uploaded transaction records and the global token list: rules in `docs/records.md` (records are verified against chain receipts; user-added tokens stay unlisted until an admin lists them)
+- The encrypted keystore (`users.encrypted_keys`) is v2: decrypting needs a server-held `key_share` released by `unlock_keystore` after checking a passcode verifier, with a failure lockout. Rules, rollout and the `KEYSTORE_SERVER_SECRET` backup requirement are in `docs/keystore.md`
 - `VerificationToken` stores temporary codes with expiration
 - On successful auth, `AuthToken` is created and returned to client
 - Authenticated requests use `Authorization: Bearer <token>` header

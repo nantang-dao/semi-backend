@@ -155,8 +155,12 @@ class HomeController < ApplicationController
     user = current_user
     raise AppError.new("User Not Found") unless user
 
-    json = user.as_json(only: [:id, :handle, :email, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :remaining_gas_credits, :total_used_gas_credits, :encrypted_keys, :can_send_badge, :handle_changed_at])
+    json = user.as_json(only: [:id, :handle, :email, :phone, :image_url, :evm_chain_address, :evm_chain_active_key, :remaining_gas_credits, :total_used_gas_credits, :can_send_badge, :handle_changed_at])
     json["next_rename_at"] = user.next_rename_at&.iso8601
+    # keystore 现在走 get_keystore / unlock_keystore。v1 还在这里返回，只为部署前加载的旧前端页面
+    # 还能签名（v1 keystore 用 get_keystore 照样拿得到，不多暴露什么）；v2 从不在这里返回。
+    json["keystore_version"] = KeystoreVault.version(user)
+    json["encrypted_keys"] = user.encrypted_keys if json["keystore_version"] == 1
     render json: json
   end
 
@@ -190,12 +194,73 @@ class HomeController < ApplicationController
     render json: { result: "ok", remaining_free_transactions: (20 - user.transaction_count) }
   end
 
+  # 旧接口，只给 v1 keystore。新前端用 get_keystore。
   def get_encrypted_keys
     user = User.find_by(id: params[:id])
     raise AppError.new("User Not Found") unless user
     raise AppError.new("Invalid Auth Token") unless user == current_user
+    raise AppError.new("Use unlock_keystore for this keystore", code: "keystore_v2") if KeystoreVault.version(user) == 2
 
     render json: { result: "ok", encrypted_keys: user.encrypted_keys }
+  end
+
+  # GET /get_keystore —— keystore 的版本和解锁所需的公开参数，见 docs/keystore.md。
+  # v1：整个 keystore（前端本地解开后升级成 v2）；v2：只有 salt / 迭代次数，keystore 本身要
+  # unlock_keystore 核对支付码后才给。
+  def get_keystore
+    user = current_user
+    raise AuthError.new("Unauthorized") unless user
+
+    case KeystoreVault.version(user)
+    when 1
+      render json: { result: "ok", version: 1, encrypted_keys: user.encrypted_keys }
+    when 2
+      render json: { result: "ok", version: 2, params: KeystoreVault.public_params(user), locked_until: user.keystore_locked_until&.future? ? user.keystore_locked_until.iso8601 : nil }
+    else
+      render json: { result: "ok", version: nil }
+    end
+  end
+
+  # POST /unlock_keystore { verifier } → { encrypted_keys, key_share }
+  def unlock_keystore
+    user = current_user
+    raise AuthError.new("Unauthorized") unless user
+    raise AppError.new("This account has no v2 keystore", code: "keystore_not_v2") unless KeystoreVault.version(user) == 2
+
+    begin
+      key_share = KeystoreVault.unlock!(user, params[:verifier])
+    rescue KeystoreVault::BadPasscode => e
+      raise AppError.new(e.message, code: "bad_passcode", data: { attempts_left: e.attempts_left })
+    rescue KeystoreVault::Locked => e
+      raise AppError.new(e.message, code: "keystore_locked", data: { locked_until: e.locked_until.iso8601 })
+    rescue KeystoreVault::Invalid => e
+      raise AppError.new(e.message, code: "invalid_keystore")
+    end
+    render json: { result: "ok", encrypted_keys: user.encrypted_keys, key_share: key_share }
+  end
+
+  # POST /update_keystore { encrypted_keys, verifier, key_share, issued_at, public_key, signature }
+  # 换一份 v2 keystore：v1 升级、以后改支付码。必须用已绑定的签名私钥签名，证明还是同一把私钥
+  # （服务端解不开 keystore，没法自己核对）。前端在上传前会先本地解一遍，确认能解开、是同一把私钥。
+  def update_keystore
+    user = current_user
+    raise AuthError.new("Unauthorized") unless user
+
+    fields = { encrypted_keys: params[:encrypted_keys], verifier: params[:verifier].to_s.downcase, key_share: params[:key_share].to_s.downcase }
+    begin
+      KeystoreVault.validate_v2!(fields[:encrypted_keys], fields[:verifier], fields[:key_share])
+      at = KeystoreVault.verify_update!(user, issued_at: params[:issued_at], public_key: params[:public_key], signature: params[:signature], **fields)
+    rescue KeystoreVault::Invalid => e
+      raise AppError.new(e.message, code: "invalid_keystore")
+    end
+
+    user.with_lock do
+      raise AppError.new("issued_at must be later than the last keystore update", code: "invalid_keystore") if user.keystore_updated_at && at <= user.keystore_updated_at
+      KeystoreVault.assign_v2(user, **fields)
+      user.keystore_updated_at = at
+      user.save!
+    end
+    render json: { result: "ok" }
   end
 
   # 首次绑定签名私钥、Safe 地址和加密 keystore。一个账户只能绑定一次，不能更换。
@@ -206,6 +271,16 @@ class HomeController < ApplicationController
     raise AppError.new("Invalid Auth Token") unless user == current_user
     raise AppError.new("A signing key is already bound to this account", code: "key_already_bound") if user.evm_chain_active_key.present?
     raise AppError.new("encrypted_keys is required") if params[:encrypted_keys].blank?
+
+    # 新前端直接建 v2（带 verifier / key_share）；部署前加载的旧页面仍传 v1，之后输支付码时再升级
+    v2 = params[:verifier].present? || params[:key_share].present?
+    if v2
+      begin
+        KeystoreVault.validate_v2!(params[:encrypted_keys], params[:verifier].to_s.downcase, params[:key_share].to_s.downcase)
+      rescue KeystoreVault::Invalid => e
+        raise AppError.new(e.message, code: "invalid_keystore")
+      end
+    end
 
     begin
       WalletBinding.verify!(
@@ -220,7 +295,12 @@ class HomeController < ApplicationController
     end
 
     begin
-      user.update!(encrypted_keys: params[:encrypted_keys], evm_chain_address: params[:evm_chain_address], evm_chain_active_key: params[:evm_chain_active_key])
+      user.assign_attributes(encrypted_keys: params[:encrypted_keys], evm_chain_address: params[:evm_chain_address], evm_chain_active_key: params[:evm_chain_active_key])
+      if v2
+        KeystoreVault.assign_v2(user, encrypted_keys: params[:encrypted_keys], verifier: params[:verifier].to_s.downcase, key_share: params[:key_share].to_s.downcase)
+        user.keystore_updated_at = Time.current
+      end
+      user.save!
     rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique
       raise AppError.new("This signing key is already bound to another account", code: "key_in_use")
     end

@@ -216,6 +216,90 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert_equal "key_in_use", JSON.parse(@response.body)["code"]
   end
 
+  V2_KEYSTORE = { version: 2, crypto: { ciphertext: "AAAA", iv: "00" * 12, salt: "11" * 16, kdf: "pbkdf2",
+                                        cipher: "aes-gcm", iterations: 100_000, hash: "SHA-256", keyShare: true } }.to_json
+
+  def bound_user(key)
+    user = User.create!(phone: "13800000050", evm_chain_active_key: key.address, evm_chain_address: key.safe_address,
+                        encrypted_keys: '{"version":1,"crypto":{"salt":"aa"}}')
+    [ user, { "Authorization" => "Bearer #{user.gen_auth_token}" } ]
+  end
+
+  def update_params(user, key, issued_at: Time.current.to_i, encrypted_keys: V2_KEYSTORE, verifier: "ab" * 32, key_share: "cd" * 32)
+    message = KeystoreVault.update_message(user.id, issued_at, encrypted_keys, verifier, key_share)
+    { encrypted_keys: encrypted_keys, verifier: verifier, key_share: key_share, issued_at: issued_at,
+      public_key: key.public_key, signature: key.personal_sign(message) }
+  end
+
+  test "binding can create a v2 keystore directly" do
+    user = User.create(phone: "1234567890")
+    key = EvmTestKey.new
+    params = key.binding_params(user).merge(encrypted_keys: V2_KEYSTORE, verifier: "ab" * 32, key_share: "cd" * 32)
+    post set_encrypted_keys_url, params: params, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
+    assert_response :success, @response.body
+    assert_equal "cd" * 32, KeystoreVault.unlock!(user.reload, "ab" * 32)
+  end
+
+  test "v1 keystores are upgraded with a signature from the bound key" do
+    key = EvmTestKey.new
+    user, auth = bound_user(key)
+    get get_keystore_url, headers: auth
+    assert_equal 1, JSON.parse(@response.body)["version"]
+    get get_me_url, headers: auth
+    assert_equal 1, JSON.parse(@response.body)["keystore_version"]
+    assert JSON.parse(@response.body)["encrypted_keys"].present?, "old pages still read v1 from get_me"
+
+    post update_keystore_url, params: update_params(user, key), headers: auth
+    assert_response :success, @response.body
+
+    get get_me_url, headers: auth
+    body = JSON.parse(@response.body)
+    assert_equal 2, body["keystore_version"]
+    assert_not body.key?("encrypted_keys")
+    get get_encrypted_keys_url, params: { id: user.id }, headers: auth
+    assert_equal "keystore_v2", JSON.parse(@response.body)["code"]
+    get get_keystore_url, headers: auth
+    body = JSON.parse(@response.body)
+    assert_equal [ 2, "11" * 16, 100_000 ], [ body["version"], body.dig("params", "salt"), body.dig("params", "iterations") ]
+    assert_not body.key?("encrypted_keys")
+
+    post unlock_keystore_url, params: { verifier: "00" * 32 }, headers: auth
+    body = JSON.parse(@response.body)
+    assert_equal [ "bad_passcode", KeystoreVault::MAX_FAILED_ATTEMPTS - 1 ], [ body["code"], body["attempts_left"] ]
+    post unlock_keystore_url, params: { verifier: "ab" * 32 }, headers: auth
+    assert_response :success
+    assert_equal [ V2_KEYSTORE, "cd" * 32 ], JSON.parse(@response.body).values_at("encrypted_keys", "key_share")
+  end
+
+  test "update_keystore refuses other keys, tampered content, stale and replayed signatures" do
+    key = EvmTestKey.new
+    user, auth = bound_user(key)
+    signed = update_params(user, key)
+    [
+      update_params(user, EvmTestKey.new),
+      signed.merge(key_share: "ee" * 32),
+      update_params(user, key, issued_at: 20.minutes.ago.to_i),
+      update_params(user, key, encrypted_keys: '{"version":1}')
+    ].each do |params|
+      post update_keystore_url, params: params, headers: auth
+      assert_response :bad_request
+      assert_equal "invalid_keystore", JSON.parse(@response.body)["code"], params.inspect
+    end
+    assert_equal 1, KeystoreVault.version(user.reload)
+
+    post update_keystore_url, params: signed, headers: auth
+    assert_response :success
+    post update_keystore_url, params: signed, headers: auth
+    assert_response :bad_request, "the same signature cannot be replayed"
+  end
+
+  test "keystore endpoints need a login" do
+    get get_keystore_url
+    assert_response :unauthorized
+    post unlock_keystore_url, params: { verifier: "ab" * 32 }
+    assert_response :unauthorized
+  end
+
   test "should get encrypted keys" do
     user = User.create(phone: "1234567890")
     get get_encrypted_keys_url, params: { id: user.id }, headers: { "Authorization" => "Bearer #{user.gen_auth_token}" }
